@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import net.snowflake.ingest.utils.BackOffException;
+import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
 import org.apache.http.StatusLine;
@@ -76,7 +77,12 @@ public final class ServiceResponseHandler {
     }
 
     // grab the response entity
-    String blob = EntityUtils.toString(response.getEntity());
+    HttpEntity entity = response.getEntity();
+    String blob = EntityUtils.toString(entity);
+
+    // consume entity as recommended in
+    // https://hc.apache.org/httpcomponents-client-4.5.x/quickstart.html
+    EntityUtils.consume(entity);
 
     // Read out the blob entity into a class
     return mapper.readValue(blob, IngestResponse.class);
@@ -112,8 +118,14 @@ public final class ServiceResponseHandler {
       return null;
     }
 
+
     // grab the string version of the response entity
-    String blob = EntityUtils.toString(response.getEntity());
+    HttpEntity entity = response.getEntity();
+    String blob = EntityUtils.toString(entity);
+
+    // consume entity as recommended in
+    // https://hc.apache.org/httpcomponents-client-4.5.x/quickstart.html
+    EntityUtils.consume(entity);;
 
     // read out our blob into a pojo
     return mapper.readValue(blob, HistoryResponse.class);
@@ -142,7 +154,12 @@ public final class ServiceResponseHandler {
     }
 
     // grab the string version of the response entity
-    String blob = EntityUtils.toString(response.getEntity());
+    HttpEntity entity = response.getEntity();
+    String blob = EntityUtils.toString(entity);
+
+    // consume entity as recommended in
+    // https://hc.apache.org/httpcomponents-client-4.5.x/quickstart.html
+    EntityUtils.consume(entity);;
 
     // read out our blob into a pojo
     return mapper.readValue(blob, HistoryRangeResponse.class);
