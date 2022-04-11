@@ -566,6 +566,7 @@ public class SimpleIngestManager implements AutoCloseable {
   /**
    * Pings the service to see the current ingest history for this table
    *
+   *
    * @param requestId a UUID we use to label the request, if null, one is generated for the user
    * @param recentSeconds history only for items in the recentSeconds window
    * @param beginMark mark from which history should be fetched
