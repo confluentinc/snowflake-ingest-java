@@ -68,6 +68,7 @@ import org.mockito.Mockito;
 
 public class SnowflakeStreamingIngestClientTest {
   private static final ObjectMapper objectMapper = new ObjectMapper();
+  private static final long flushTimestamp = System.currentTimeMillis();
 
   SnowflakeStreamingIngestChannelInternal<StubChunkData> channel1;
   SnowflakeStreamingIngestChannelInternal<StubChunkData> channel2;
@@ -487,7 +488,7 @@ public class SnowflakeStreamingIngestClientTest {
 
     List<BlobMetadata> blobs =
         Collections.singletonList(
-            new BlobMetadata("path", "md5", Collections.singletonList(chunkMetadata), null));
+            new BlobMetadata("path", "md5", Collections.singletonList(chunkMetadata)));
 
     Map<Object, Object> payload = new HashMap<>();
     payload.put("request_id", null);
@@ -587,8 +588,8 @@ public class SnowflakeStreamingIngestClientTest {
     chunks1.add(chunkMetadata1);
     chunks1.add(chunkMetadata2);
     chunks2.add(chunkMetadata3);
-    blobs.add(new BlobMetadata("path1", "md51", chunks1, null));
-    blobs.add(new BlobMetadata("path2", "md52", chunks2, null));
+    blobs.add(new BlobMetadata("path1", "md51", chunks1));
+    blobs.add(new BlobMetadata("path2", "md52", chunks2));
 
     List<ChannelRegisterStatus> channelRegisterStatuses = new ArrayList<>();
     ChannelRegisterStatus status1 = new ChannelRegisterStatus();
@@ -673,8 +674,8 @@ public class SnowflakeStreamingIngestClientTest {
 
     try {
       List<BlobMetadata> blobs =
-          Collections.singletonList(new BlobMetadata("path", "md5", new ArrayList<>(), null));
-      client.registerBlobs(blobs);
+          Collections.singletonList(new BlobMetadata("path", "md5", new ArrayList<>()));
+      client.registerBlobs(blobs, flushTimestamp);
       Assert.fail("Register blob should fail on 404 error");
     } catch (SFException e) {
       Assert.assertEquals(ErrorCode.REGISTER_BLOB_FAILURE.getMessageCode(), e.getVendorCode());
@@ -720,8 +721,8 @@ public class SnowflakeStreamingIngestClientTest {
 
     try {
       List<BlobMetadata> blobs =
-          Collections.singletonList(new BlobMetadata("path", "md5", new ArrayList<>(), null));
-      client.registerBlobs(blobs);
+          Collections.singletonList(new BlobMetadata("path", "md5", new ArrayList<>()));
+      client.registerBlobs(blobs, flushTimestamp);
       Assert.fail("Register blob should fail on SF internal error");
     } catch (SFException e) {
       Assert.assertEquals(ErrorCode.REGISTER_BLOB_FAILURE.getMessageCode(), e.getVendorCode());
@@ -775,8 +776,8 @@ public class SnowflakeStreamingIngestClientTest {
             null);
 
     List<BlobMetadata> blobs =
-        Collections.singletonList(new BlobMetadata("path", "md5", new ArrayList<>(), null));
-    client.registerBlobs(blobs);
+        Collections.singletonList(new BlobMetadata("path", "md5", new ArrayList<>()));
+    client.registerBlobs(blobs, flushTimestamp);
   }
 
   @Test
@@ -862,9 +863,9 @@ public class SnowflakeStreamingIngestClientTest {
     client.getChannelCache().addChannel(channel2);
     client.getChannelCache().addChannel(channel3);
     client.getChannelCache().addChannel(channel4);
-    client.registerBlobs(blobs);
+    client.registerBlobs(blobs, flushTimestamp);
     Mockito.verify(requestBuilder, Mockito.times(MAX_STREAMING_INGEST_API_CHANNEL_RETRY + 1))
-        .generateStreamingIngestPostRequest(Mockito.anyString(), Mockito.any(), Mockito.any());
+        .generateStreamingIngestPostRequest(Mockito.contains(flushTimestamp + ""), Mockito.any(), Mockito.any());
     Assert.assertFalse(channel1.isValid());
     Assert.assertFalse(channel2.isValid());
   }
@@ -978,9 +979,9 @@ public class SnowflakeStreamingIngestClientTest {
     client.getChannelCache().addChannel(channel3);
     client.getChannelCache().addChannel(channel4);
 
-    client.registerBlobs(blobs);
+    client.registerBlobs(blobs, flushTimestamp);
     Mockito.verify(requestBuilder, Mockito.times(2))
-        .generateStreamingIngestPostRequest(Mockito.anyString(), Mockito.any(), Mockito.any());
+        .generateStreamingIngestPostRequest(Mockito.contains(flushTimestamp + ""), Mockito.any(), Mockito.any());
     Assert.assertTrue(channel1.isValid());
     Assert.assertTrue(channel2.isValid());
   }
@@ -1082,8 +1083,8 @@ public class SnowflakeStreamingIngestClientTest {
     Assert.assertTrue(channel2.isValid());
 
     List<BlobMetadata> blobs =
-        Collections.singletonList(new BlobMetadata("path", "md5", new ArrayList<>(), null));
-    client.registerBlobs(blobs);
+        Collections.singletonList(new BlobMetadata("path", "md5", new ArrayList<>()));
+    client.registerBlobs(blobs, flushTimestamp);
 
     // Channel2 should be invalidated now
     Assert.assertTrue(channel1.isValid());
