@@ -493,9 +493,14 @@ class FlushService<T> {
     // Construct the blob along with the metadata of the blob
     BlobBuilder.Blob blob = BlobBuilder.constructBlobAndMetadata(filePath, blobData, bdecVersion);
 
-    blob.blobLatencies.setBuildLatencyMs(buildContext);
-
-    return upload(filePath, blob.blobBytes, blob.chunksMetadataList, blob.blobLatencies);
+    return buildContext != null
+        ? upload(
+            filePath,
+            blob.blobBytes,
+            blob.chunksMetadataList,
+            TimeUnit.NANOSECONDS.toMillis(buildContext.stop()))
+        : upload(
+            filePath, blob.blobBytes, blob.chunksMetadataList, BlobMetadata.DEFAULT_BLOB_LATENCY);
   }
 
   /**
@@ -504,15 +509,17 @@ class FlushService<T> {
    * @param filePath full path of the blob file
    * @param blob blob data
    * @param metadata a list of chunk metadata
+   * @param buildLatencyMs the build latency for the blob
    * @return BlobMetadata object used to create the register blob request
    */
   BlobMetadata upload(
-      String filePath, byte[] blob, List<ChunkMetadata> metadata, BlobLatencies blobLatencies)
+      String filePath, byte[] blob, List<ChunkMetadata> metadata, long buildLatencyMs)
       throws NoSuchAlgorithmException {
     logger.logInfo("Start uploading file={}, size={}", filePath, blob.length);
     long startTime = System.currentTimeMillis();
 
     Timer.Context uploadContext = Utils.createTimerContext(this.owningClient.uploadLatency);
+    long uploadLatencyMs = BlobMetadata.DEFAULT_BLOB_LATENCY;
 
     this.targetStage.put(filePath, blob);
 
@@ -523,7 +530,7 @@ class FlushService<T> {
         System.currentTimeMillis() - startTime);
 
     if (uploadContext != null) {
-      blobLatencies.setUploadLatencyMs(uploadContext);
+      uploadLatencyMs = TimeUnit.NANOSECONDS.toMillis(uploadContext.stop());
       this.owningClient.uploadThroughput.mark(blob.length);
       this.owningClient.blobSizeHistogram.update(blob.length);
       this.owningClient.blobRowCountHistogram.update(
@@ -531,7 +538,12 @@ class FlushService<T> {
     }
 
     return BlobMetadata.createBlobMetadata(
-        filePath, BlobBuilder.computeMD5(blob), bdecVersion, metadata, blobLatencies);
+        filePath,
+        BlobBuilder.computeMD5(blob),
+        bdecVersion,
+        metadata,
+        buildLatencyMs,
+        uploadLatencyMs);
   }
 
   /**
