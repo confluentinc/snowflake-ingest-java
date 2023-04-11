@@ -105,8 +105,7 @@ public class FlushServiceTest {
       channelCache = new ChannelCache<>();
       Mockito.when(client.getChannelCache()).thenReturn(channelCache);
       registerService = Mockito.spy(new RegisterService(client, client.isTestMode()));
-      flushService =
-          Mockito.spy(new FlushService<>(client, channelCache, stage, registerService, false));
+      flushService = Mockito.spy(new FlushService<>(client, channelCache, stage, false));
     }
 
     ChannelData<T> flushChannel(String name) {
@@ -463,43 +462,28 @@ public class FlushServiceTest {
 
   @Test
   public void testFlush() throws Exception {
-    long beginTestTimestamp = System.currentTimeMillis();
-    TimeUnit.MILLISECONDS.sleep(100);
-
     TestContext<?> testContext = testContextFactory.create();
     FlushService<?> flushService = testContext.flushService;
-    RegisterService<?> registerService = testContext.registerService;
 
     // Nothing to flush
     flushService.flush(false).get();
     Mockito.verify(flushService, Mockito.times(0)).distributeFlushTasks();
-    Mockito.verify(registerService, Mockito.times(0))
-        .registerBlobs(ArgumentMatchers.anyMap(), ArgumentMatchers.anyLong());
 
     // Force = true flushes
     flushService.flush(true).get();
     Mockito.verify(flushService).distributeFlushTasks();
     Mockito.verify(flushService, Mockito.times(1)).distributeFlushTasks();
-    Mockito.verify(registerService, Mockito.times(1))
-        .registerBlobs(
-            ArgumentMatchers.anyMap(), ArgumentMatchers.longThat(l -> l >= beginTestTimestamp));
 
     // isNeedFlush = true flushes
     flushService.isNeedFlush = true;
     flushService.flush(false).get();
     Mockito.verify(flushService, Mockito.times(2)).distributeFlushTasks();
-    Mockito.verify(registerService, Mockito.times(2))
-        .registerBlobs(
-            ArgumentMatchers.anyMap(), ArgumentMatchers.longThat(l -> l >= beginTestTimestamp));
     Assert.assertFalse(flushService.isNeedFlush);
 
     // lastFlushTime causes flush
     flushService.lastFlushTime = 0;
     flushService.flush(false).get();
     Mockito.verify(flushService, Mockito.times(3)).distributeFlushTasks();
-    Mockito.verify(registerService, Mockito.times(3))
-        .registerBlobs(
-            ArgumentMatchers.anyMap(), ArgumentMatchers.longThat(l -> l >= beginTestTimestamp));
     Assert.assertTrue(flushService.lastFlushTime > 0);
   }
 
@@ -638,15 +622,17 @@ public class FlushServiceTest {
             nameCaptor.capture(),
             blobCaptor.capture(),
             metadataCaptor.capture(),
-            ArgumentMatchers.anyLong());
+            ArgumentMatchers.any());
     Assert.assertEquals("file_name", nameCaptor.getValue());
 
     ChunkMetadata metadataResult = metadataCaptor.getValue().get(0);
     List<ChannelMetadata> channelMetadataResult = metadataResult.getChannels();
 
     Assert.assertEquals(BlobBuilder.computeMD5(blobCaptor.getValue()), blobMetadata.getMD5());
-    Assert.assertEquals(expectedBuildLatencyMs, blobMetadata.getBuildLatencyMs());
-    Assert.assertEquals(expectedUploadLatencyMs, blobMetadata.getUploadLatencyMs());
+    Assert.assertEquals(
+        expectedBuildLatencyMs, blobMetadata.getBlobLatencies().getBuildLatencyMs());
+    Assert.assertEquals(
+        expectedUploadLatencyMs, blobMetadata.getBlobLatencies().getUploadLatencyMs());
 
     Assert.assertEquals(
         expectedChunkEpInfo.getRowCount(), metadataResult.getEpInfo().getRowCount());
@@ -777,8 +763,7 @@ public class FlushServiceTest {
     StreamingIngestStage stage = Mockito.mock(StreamingIngestStage.class);
     Mockito.when(stage.getClientPrefix()).thenReturn("client_prefix");
     FlushService<StubChunkData> flushService =
-        new FlushService<>(
-            client, channelCache, stage, new RegisterService(client, client.isTestMode()), false);
+        new FlushService<>(client, channelCache, stage, false);
     flushService.invalidateAllChannelsInBlob(blobData);
 
     Assert.assertFalse(channel1.isValid());

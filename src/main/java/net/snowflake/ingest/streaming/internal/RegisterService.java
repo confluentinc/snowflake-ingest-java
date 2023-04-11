@@ -79,11 +79,9 @@ class RegisterService<T> {
    * the ordering is maintained across independent blobs in the same channel.
    *
    * @param latencyTimerContextMap the map that stores the latency timer for each blob
-   * @param flushJobStartTime When the flush job began
    * @return a list of blob names that have errors during registration
    */
-  List<FlushService.BlobData<T>> registerBlobs(
-      Map<String, Timer.Context> latencyTimerContextMap, long flushJobStartTime) {
+  List<FlushService.BlobData<T>> registerBlobs(Map<String, Timer.Context> latencyTimerContextMap) {
     List<FlushService.BlobData<T>> errorBlobs = new ArrayList<>();
     if (!this.blobsList.isEmpty()) {
       // Will skip and try again later if someone else is holding the lock

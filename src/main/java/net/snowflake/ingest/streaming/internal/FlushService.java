@@ -134,13 +134,12 @@ class FlushService<T> {
       SnowflakeStreamingIngestClientInternal<T> client,
       ChannelCache<T> cache,
       StreamingIngestStage targetStage, // For testing
-      RegisterService registerService,
       boolean isTestMode) {
     this.owningClient = client;
     this.channelCache = cache;
     this.targetStage = targetStage;
     this.counter = new AtomicLong(0);
-    this.registerService = registerService;
+    this.registerService = new RegisterService<>(client, isTestMode);
     this.isNeedFlush = false;
     this.lastFlushTime = System.currentTimeMillis();
     this.isTestMode = isTestMode;
@@ -240,13 +239,11 @@ class FlushService<T> {
   /**
    * Registers blobs with Snowflake
    *
-   * @param flushJobStartTime When the flush job began
    * @return
    */
-  private CompletableFuture<Void> registerFuture(long flushJobStartTime) {
+  private CompletableFuture<Void> registerFuture() {
     return CompletableFuture.runAsync(
-        () -> this.registerService.registerBlobs(latencyTimerContextMap, flushJobStartTime),
-        this.registerWorker);
+        () -> this.registerService.registerBlobs(latencyTimerContextMap), this.registerWorker);
   }
 
   /**
@@ -261,7 +258,6 @@ class FlushService<T> {
    */
   CompletableFuture<Void> flush(boolean isForce) {
     long timeDiffMillis = System.currentTimeMillis() - this.lastFlushTime;
-    long flushJobStartTime = System.currentTimeMillis();
 
     if (isForce
         || (!DISABLE_BACKGROUND_FLUSH
@@ -272,7 +268,7 @@ class FlushService<T> {
 
       return this.statsFuture()
           .thenCompose((v) -> this.distributeFlush(isForce, timeDiffMillis))
-          .thenCompose((v) -> this.registerFuture(flushJobStartTime));
+          .thenCompose((v) -> this.registerFuture());
     }
     return this.statsFuture();
   }
@@ -493,14 +489,9 @@ class FlushService<T> {
     // Construct the blob along with the metadata of the blob
     BlobBuilder.Blob blob = BlobBuilder.constructBlobAndMetadata(filePath, blobData, bdecVersion);
 
-    return buildContext != null
-        ? upload(
-            filePath,
-            blob.blobBytes,
-            blob.chunksMetadataList,
-            TimeUnit.NANOSECONDS.toMillis(buildContext.stop()))
-        : upload(
-            filePath, blob.blobBytes, blob.chunksMetadataList, BlobMetadata.DEFAULT_BLOB_LATENCY);
+    blob.blobLatencies.setBuildLatencyMs(buildContext);
+
+    return upload(filePath, blob.blobBytes, blob.chunksMetadataList, blob.blobLatencies);
   }
 
   /**
@@ -509,18 +500,15 @@ class FlushService<T> {
    * @param filePath full path of the blob file
    * @param blob blob data
    * @param metadata a list of chunk metadata
-   * @param buildLatencyMs the build latency for the blob
    * @return BlobMetadata object used to create the register blob request
    */
   BlobMetadata upload(
-      String filePath, byte[] blob, List<ChunkMetadata> metadata, long buildLatencyMs)
+      String filePath, byte[] blob, List<ChunkMetadata> metadata, BlobLatencies blobLatencies)
       throws NoSuchAlgorithmException {
     logger.logInfo("Start uploading file={}, size={}", filePath, blob.length);
     long startTime = System.currentTimeMillis();
 
     Timer.Context uploadContext = Utils.createTimerContext(this.owningClient.uploadLatency);
-    long uploadLatencyMs = BlobMetadata.DEFAULT_BLOB_LATENCY;
-
     this.targetStage.put(filePath, blob);
 
     logger.logInfo(
@@ -530,7 +518,7 @@ class FlushService<T> {
         System.currentTimeMillis() - startTime);
 
     if (uploadContext != null) {
-      uploadLatencyMs = TimeUnit.NANOSECONDS.toMillis(uploadContext.stop());
+      blobLatencies.setUploadLatencyMs(uploadContext);
       this.owningClient.uploadThroughput.mark(blob.length);
       this.owningClient.blobSizeHistogram.update(blob.length);
       this.owningClient.blobRowCountHistogram.update(
@@ -538,12 +526,7 @@ class FlushService<T> {
     }
 
     return BlobMetadata.createBlobMetadata(
-        filePath,
-        BlobBuilder.computeMD5(blob),
-        bdecVersion,
-        metadata,
-        buildLatencyMs,
-        uploadLatencyMs);
+        filePath, BlobBuilder.computeMD5(blob), bdecVersion, metadata, blobLatencies);
   }
 
   /**

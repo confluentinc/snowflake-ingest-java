@@ -26,8 +26,7 @@ public class RegisterServiceTest {
             CompletableFuture.completedFuture(new BlobMetadata("path", "md5", null, null)));
     rs.addBlobs(Collections.singletonList(blobFuture));
     Assert.assertEquals(1, rs.getBlobsList().size());
-    List<FlushService.BlobData<StubChunkData>> errorBlobs =
-        rs.registerBlobs(null, System.currentTimeMillis());
+    List<FlushService.BlobData<StubChunkData>> errorBlobs = rs.registerBlobs(null);
     Assert.assertEquals(0, rs.getBlobsList().size());
     Assert.assertEquals(0, errorBlobs.size());
   }
@@ -58,8 +57,7 @@ public class RegisterServiceTest {
     rs.addBlobs(Arrays.asList(blobFuture1, blobFuture2));
     Assert.assertEquals(2, rs.getBlobsList().size());
     try {
-      List<FlushService.BlobData<StubChunkData>> errorBlobs =
-          rs.registerBlobs(null, System.currentTimeMillis());
+      List<FlushService.BlobData<StubChunkData>> errorBlobs = rs.registerBlobs(null);
       Assert.assertEquals(0, rs.getBlobsList().size());
       Assert.assertEquals(1, errorBlobs.size());
       Assert.assertEquals("fail", errorBlobs.get(0).getFilePath());
@@ -95,8 +93,7 @@ public class RegisterServiceTest {
     rs.addBlobs(Arrays.asList(blobFuture1, blobFuture2));
     Assert.assertEquals(2, rs.getBlobsList().size());
     try {
-      List<FlushService.BlobData<StubChunkData>> errorBlobs =
-          rs.registerBlobs(null, System.currentTimeMillis());
+      List<FlushService.BlobData<StubChunkData>> errorBlobs = rs.registerBlobs(null);
       Assert.assertEquals(0, rs.getBlobsList().size());
       Assert.assertEquals(1, errorBlobs.size());
       Assert.assertEquals("fail", errorBlobs.get(0).getFilePath());
@@ -118,8 +115,7 @@ public class RegisterServiceTest {
     rs.addBlobs(Collections.singletonList(blobFuture));
     Assert.assertEquals(1, rs.getBlobsList().size());
     try {
-      List<FlushService.BlobData<StubChunkData>> errorBlobs =
-          rs.registerBlobs(null, System.currentTimeMillis());
+      List<FlushService.BlobData<StubChunkData>> errorBlobs = rs.registerBlobs(null);
       Assert.assertEquals(0, rs.getBlobsList().size());
       Assert.assertEquals(1, errorBlobs.size());
       Assert.assertEquals("fail", errorBlobs.get(0).getFilePath());
