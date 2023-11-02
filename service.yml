@@ -1,0 +1,7 @@
+name: snowflake-ingest-java
+lang: unknown
+codeowners:
+  enable: true
+semaphore:
+  enable: true
+  pipeline_type: cp
