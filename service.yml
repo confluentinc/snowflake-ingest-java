@@ -5,3 +5,5 @@ codeowners:
 semaphore:
   enable: true
   pipeline_type: cp
+git:
+  enable: true
