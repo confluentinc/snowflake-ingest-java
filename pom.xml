@@ -560,6 +560,29 @@
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-antrun-plugin</artifactId>
+          <version>3.0.0</version>
+          <executions>
+            <execution>
+              <phase>process-resources</phase> <!-- After resources are processed -->
+              <goals>
+                <goal>run</goal>
+              </goals>
+              <configuration>
+                <tasks>
+                  <!-- Use xmllint to format the dependency-reduced-pom.xml -->
+                  <exec executable="xmllint">
+                    <arg value="--format" />
+                    <arg value="target/dependency-reduced-pom.xml" />
+                    <redirector output="target/dependency-reduced-pom.xml" />
+                  </exec>
+                </tasks>
+              </configuration>
+            </execution>
+          </executions>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-enforcer-plugin</artifactId>
           <version>3.0.0-M3</version>
           <dependencies>
@@ -671,29 +694,6 @@
             <descriptorRef>jar-with-dependencies</descriptorRef>
           </descriptorRefs>
         </configuration>
-      </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-antrun-plugin</artifactId>
-        <version>3.0.0</version>
-        <executions>
-          <execution>
-            <phase>process-resources</phase> <!-- After resources are processed -->
-            <goals>
-              <goal>run</goal>
-            </goals>
-            <configuration>
-              <tasks>
-                <!-- Use xmllint to format the dependency-reduced-pom.xml -->
-                <exec executable="xmllint">
-                  <arg value="--format" />
-                  <arg value="target/dependency-reduced-pom.xml" />
-                  <redirector output="target/dependency-reduced-pom.xml" />
-                </exec>
-              </tasks>
-            </configuration>
-          </execution>
-        </executions>
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
