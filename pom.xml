@@ -4,9 +4,9 @@
   <modelVersion>4.0.0</modelVersion>
 
   <!-- Arifact name and version information -->
-  <groupId>net.snowflake</groupId>
+  <groupId>io.confluent</groupId>
   <artifactId>snowflake-ingest-sdk</artifactId>
-  <version>2.1.0</version>
+  <version>2.1.0-hotfix1</version>
   <packaging>jar</packaging>
   <name>Snowflake Ingest SDK</name>
   <description>Snowflake Ingest SDK</description>
@@ -557,6 +557,29 @@
           <configuration>
             <skip>true</skip>
           </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-antrun-plugin</artifactId>
+          <version>3.0.0</version>
+          <executions>
+            <execution>
+              <phase>process-resources</phase> <!-- After resources are processed -->
+              <goals>
+                <goal>run</goal>
+              </goals>
+              <configuration>
+                <tasks>
+                  <!-- Use xmllint to format the dependency-reduced-pom.xml -->
+                  <exec executable="xmllint">
+                    <arg value="--format" />
+                    <arg value="target/dependency-reduced-pom.xml" />
+                    <redirector output="target/dependency-reduced-pom.xml" />
+                  </exec>
+                </tasks>
+              </configuration>
+            </execution>
+          </executions>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
