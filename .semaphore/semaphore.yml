@@ -7,7 +7,7 @@ version: v1.0
 name: build-test-release
 agent:
   machine:
-    type: s1-prod-ubuntu24-04-amd64-1
+    type: s1-prod-ubuntu20-04-amd64-1
 
 fail_fast:
   cancel:
@@ -24,7 +24,7 @@ global_job_config:
   prologue:
     commands:
       - checkout
-      - sem-version java 8
+      - . set-cp-java-version
       - . cache-maven restore
 
 blocks:
@@ -32,14 +32,13 @@ blocks:
     dependencies: []
     run:
       # don't run the tests on non-functional changes...
-      when: "change_in('/', {exclude: ['/.deployed-versions/', '.github/'], default_branch: 'master'})"
+      when: "change_in('/', {exclude: ['/.deployed-versions/', '.github/']})"
     task:
       jobs:
         - name: Test
           commands:
             - . sem-pint -c
             - mvn -U -Dmaven.wagon.http.retryHandler.count=10 --batch-mode --no-transfer-progress clean verify install dependency:analyze validate
-            - cve-scan
             - . cache-maven store
       epilogue:
         always:
@@ -63,7 +62,7 @@ after_pipeline:
   task:
     agent:
       machine:
-        type: s1-prod-ubuntu24-04-arm64-0
+        type: s1-prod-ubuntu20-04-arm64-0
     jobs:
       - name: Metrics
         commands:

@@ -1,21 +1,10 @@
 name: snowflake-ingest-java
-lang: java
-lang_version: 8
+lang: unknown
+lang_version: unknown
 codeowners:
   enable: true
 semaphore:
   enable: true
   pipeline_type: cp
-  cve_scan: true
-  branches:
-    - master
-    - main
-    - /^\d+\.\d+\.x$/
-    - /v\d+\.\d+\.\d+\-hotfix\-x/
-    - /^gh-readonly-queue.*/
 git:
   enable: true
-code_artifact:
-  enable: true
-  package_paths:
-    - maven-snapshots/maven/io.confluent/snowflake-ingest-sdk
