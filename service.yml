@@ -1,6 +1,6 @@
 name: snowflake-ingest-java
-lang: unknown
-lang_version: unknown
+lang: java
+lang_version: 8
 codeowners:
   enable: true
 semaphore:
@@ -8,3 +8,7 @@ semaphore:
   pipeline_type: cp
 git:
   enable: true
+code_artifact:
+  enable: true
+  package_paths:
+    - maven-snapshots/maven/io.confluent/snowflake-ingest-sdk
