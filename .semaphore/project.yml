@@ -31,6 +31,7 @@ spec:
         - 2.1.0-hotfix
         - /^\d+\.\d+\.x$/
         - /^\d+\.\d+\.\d+-hotfix$/
+        - /\d+\.\d+\.\d+-hotfix/
         - /^gh-readonly-queue.*/
   custom_permissions: true
   debug_permissions:
