@@ -6,7 +6,10 @@ codeowners:
 semaphore:
   enable: true
   pipeline_type: cp
+  cve_scan: true
 git:
+  enable: true
+github:
   enable: true
 code_artifact:
   enable: true
@@ -15,6 +18,7 @@ code_artifact:
 branches:
   - master
   - main
+  - 2.1.0-hotfix
   - /^\d+\.\d+\.x$/
   - /v\d+\.\d+\.\d+\-hotfix\-x/
   - /\d+\.\d+\.\d+-hotfix/
