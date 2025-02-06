@@ -119,7 +119,7 @@ mvn install
 ```
 
 If you would just like to build the jar in the source directory, you can
-run
+run 
 
 ``` {.bash}
 mvn package
