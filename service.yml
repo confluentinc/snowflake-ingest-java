@@ -1,10 +1,17 @@
 name: snowflake-ingest-java
-lang: unknown
-lang_version: unknown
+lang: java
+lang_version: 8
 codeowners:
   enable: true
 semaphore:
   enable: true
   pipeline_type: cp
+  cve_scan: true
+  branches:
+    - master
+    - main
+    - /^\d+\.\d+\.x$/
+    - /v\d+\.\d+\.\d+\-hotfix\-x/
+    - /^gh-readonly-queue.*/
 git:
   enable: true
