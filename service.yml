@@ -6,7 +6,6 @@ codeowners:
 semaphore:
   enable: true
   pipeline_type: cp
-  cve_scan: true
   branches:
     - master
     - main
