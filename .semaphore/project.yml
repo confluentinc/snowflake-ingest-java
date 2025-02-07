@@ -30,6 +30,7 @@ spec:
       - main
       - 2.1.0-hotfix
       - /^\d+\.\d+\.x$/
+      - /v\d+\.\d+\.\d+\-hotfix\-x/
       - /^\d+\.\d+\.\d+-hotfix$/
       - /\d+\.\d+\.\d+-hotfix/
       - /^gh-readonly-queue.*/
