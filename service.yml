@@ -7,6 +7,14 @@ semaphore:
   enable: true
   pipeline_type: cp
   cve_scan: true
+  branches:
+    - master
+    - main
+    - 2.1.0-hotfix
+    - /^\d+\.\d+\.x$/
+    - /v\d+\.\d+\.\d+\-hotfix\-x/
+    - /\d+\.\d+\.\d+-hotfix/
+    - /^gh-readonly-queue.*/
 git:
   enable: true
 github:
@@ -15,11 +23,3 @@ code_artifact:
   enable: true
   package_paths:
     - maven-snapshots/maven/io.confluent/snowflake-ingest-sdk
-branches:
-  - master
-  - main
-  - 2.1.0-hotfix
-  - /^\d+\.\d+\.x$/
-  - /v\d+\.\d+\.\d+\-hotfix\-x/
-  - /\d+\.\d+\.\d+-hotfix/
-  - /^gh-readonly-queue.*/
