@@ -609,6 +609,7 @@ public class SimpleIngestManager implements AutoCloseable {
   public void close() {
     builder.closeResources();
     try {
+      LOGGER.info("Closing http client");
       httpClient.close();
     } catch (IOException e) {
       LOGGER.error("Error closing http client", e);
