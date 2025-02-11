@@ -611,7 +611,7 @@ public class SimpleIngestManager implements AutoCloseable {
     builder.closeResources();
     if (!httpClientClosed) {
       try {
-        LOGGER.info("Closing http client");
+        LOGGER.info("Closing http client" + Thread.currentThread().getName() + " " + Integer.toHexString(System.identityHashCode(this)));
         httpClient.close();
       } catch (IOException e) {
         LOGGER.error("Error closing http client", e);
