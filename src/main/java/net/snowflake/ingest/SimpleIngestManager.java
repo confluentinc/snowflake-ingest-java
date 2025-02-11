@@ -194,7 +194,7 @@ public class SimpleIngestManager implements AutoCloseable {
   private static final Logger LOGGER = LoggerFactory.getLogger(SimpleIngestManager.class);
   // HTTP Client that we use for sending requests to the service
   private CloseableHttpClient httpClient;
-  private boolean httpClientClosed = false;
+
   // the account in which the user lives
   private String account;
 
