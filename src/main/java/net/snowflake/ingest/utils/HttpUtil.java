@@ -23,35 +23,35 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 import javax.net.ssl.SSLContext;
 import net.snowflake.client.core.SFSessionProperty;
-import net.snowflake.client.jdbc.internal.apache.http.HttpHost;
-import net.snowflake.client.jdbc.internal.apache.http.HttpRequest;
-import net.snowflake.client.jdbc.internal.apache.http.HttpResponse;
-import net.snowflake.client.jdbc.internal.apache.http.NoHttpResponseException;
-import net.snowflake.client.jdbc.internal.apache.http.auth.AuthScope;
-import net.snowflake.client.jdbc.internal.apache.http.auth.Credentials;
-import net.snowflake.client.jdbc.internal.apache.http.auth.UsernamePasswordCredentials;
-import net.snowflake.client.jdbc.internal.apache.http.client.CredentialsProvider;
-import net.snowflake.client.jdbc.internal.apache.http.client.HttpRequestRetryHandler;
-import net.snowflake.client.jdbc.internal.apache.http.client.ServiceUnavailableRetryStrategy;
-import net.snowflake.client.jdbc.internal.apache.http.client.config.RequestConfig;
-import net.snowflake.client.jdbc.internal.apache.http.client.protocol.HttpClientContext;
-import net.snowflake.client.jdbc.internal.apache.http.config.Registry;
-import net.snowflake.client.jdbc.internal.apache.http.config.RegistryBuilder;
-import net.snowflake.client.jdbc.internal.apache.http.conn.DnsResolver;
-import net.snowflake.client.jdbc.internal.apache.http.conn.routing.HttpRoute;
-import net.snowflake.client.jdbc.internal.apache.http.conn.socket.ConnectionSocketFactory;
-import net.snowflake.client.jdbc.internal.apache.http.conn.socket.PlainConnectionSocketFactory;
-import net.snowflake.client.jdbc.internal.apache.http.conn.ssl.DefaultHostnameVerifier;
-import net.snowflake.client.jdbc.internal.apache.http.conn.ssl.SSLConnectionSocketFactory;
-import net.snowflake.client.jdbc.internal.apache.http.impl.client.BasicCredentialsProvider;
-import net.snowflake.client.jdbc.internal.apache.http.impl.client.CloseableHttpClient;
-import net.snowflake.client.jdbc.internal.apache.http.impl.client.HttpClientBuilder;
-import net.snowflake.client.jdbc.internal.apache.http.impl.conn.DefaultProxyRoutePlanner;
-import net.snowflake.client.jdbc.internal.apache.http.impl.conn.PoolingHttpClientConnectionManager;
-import net.snowflake.client.jdbc.internal.apache.http.pool.PoolStats;
-import net.snowflake.client.jdbc.internal.apache.http.protocol.HttpContext;
-import net.snowflake.client.jdbc.internal.apache.http.ssl.SSLContexts;
 import net.snowflake.ingest.streaming.internal.StreamingIngestUtils;
+import org.apache.http.HttpHost;
+import org.apache.http.HttpRequest;
+import org.apache.http.HttpResponse;
+import org.apache.http.NoHttpResponseException;
+import org.apache.http.auth.AuthScope;
+import org.apache.http.auth.Credentials;
+import org.apache.http.auth.UsernamePasswordCredentials;
+import org.apache.http.client.CredentialsProvider;
+import org.apache.http.client.HttpRequestRetryHandler;
+import org.apache.http.client.ServiceUnavailableRetryStrategy;
+import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.protocol.HttpClientContext;
+import org.apache.http.config.Registry;
+import org.apache.http.config.RegistryBuilder;
+import org.apache.http.conn.DnsResolver;
+import org.apache.http.conn.routing.HttpRoute;
+import org.apache.http.conn.socket.ConnectionSocketFactory;
+import org.apache.http.conn.socket.PlainConnectionSocketFactory;
+import org.apache.http.conn.ssl.DefaultHostnameVerifier;
+import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
+import org.apache.http.impl.client.BasicCredentialsProvider;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClientBuilder;
+import org.apache.http.impl.conn.DefaultProxyRoutePlanner;
+import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
+import org.apache.http.pool.PoolStats;
+import org.apache.http.protocol.HttpContext;
+import org.apache.http.ssl.SSLContexts;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -773,7 +773,7 @@ public class HttpUtil {
    * repackaged DnsResolver interface.
    */
   private static class FilteringDnsResolverAdapter
-      implements net.snowflake.client.jdbc.internal.apache.http.conn.DnsResolver {
+      implements org.apache.http.conn.DnsResolver {
 
     private final io.confluent.connect.utils.network.FilteringDnsResolver delegate;
 
