@@ -142,6 +142,9 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
   // Background thread that uploads telemetry data periodically
   private ScheduledExecutorService telemetryWorker;
 
+  // Store original properties for proxy configuration
+  private final Properties originalProperties;
+
   /**
    * Constructor
    *
@@ -162,11 +165,24 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
       RequestBuilder requestBuilder,
       Map<String, Object> parameterOverrides) {
     this.parameterProvider = new ParameterProvider(parameterOverrides, prop);
+    this.originalProperties = prop;
 
     this.name = name;
     String accountName = accountURL == null ? null : accountURL.getAccount();
     this.isTestMode = isTestMode;
-    this.httpClient = httpClient == null ? HttpUtil.getHttpClient(accountName) : httpClient;
+
+    System.out.println("DEBUGSNOWFLAKEPROXY: Getting HttpClient for account: " + accountName);
+    if (prop== null) {
+      System.out.println("DEBUGSNOWFLAKEPROXY: Properties are null in SnowflakeStreamingIngestClientInternal");
+    } else {
+      System.out.println("DEBUGSNOWFLAKEPROXY: Properties are not null in SnowflakeStreamingIngestClientInternal");
+      System.out.println("DEBUGSNOWFLAKEPROXY: Properties object in SnowflakeStreamingIngestClientInternal contains " + prop.size() + " properties:");
+      for (Object key : prop.keySet()) {
+        System.out.println("DEBUGSNOWFLAKEPROXY: SnowflakeStreamingIngestClientInternal Property: " + key + " = " + prop.get(key));
+      }
+    }
+
+    this.httpClient = HttpUtil.getHttpClient(accountName, prop);
     this.channelCache = new ChannelCache<>();
     this.isClosed = false;
     this.requestBuilder = requestBuilder;
@@ -1074,5 +1090,48 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
     if (!this.isTestMode) {
       HttpUtil.shutdownHttpConnectionManagerDaemonThread();
     }
+  }
+
+  /**
+   * Extract proxy properties from the original Properties object
+   *
+   * @return Properties containing proxy configuration
+   */
+  Properties getProxyProperties() {
+    Properties proxyProperties = new Properties();
+    
+    System.out.println("DEBUGSNOWFLAKEPROXY: getProxyProperties called, originalProperties is " + (this.originalProperties != null ? "not null" : "null"));
+    
+    if (this.originalProperties != null) {
+      System.out.println("DEBUGSNOWFLAKEPROXY: originalProperties contains " + this.originalProperties.size() + " properties");
+      
+      // Extract proxy properties that were passed through the streaming client
+      // These should be in the correct SFSessionProperty format
+      for (String key : this.originalProperties.stringPropertyNames()) {
+        System.out.println("DEBUGSNOWFLAKEPROXY: Checking property: " + key + " = " + this.originalProperties.getProperty(key));
+        if (key.equals(SFSessionProperty.USE_PROXY.getPropertyKey()) ||
+            key.equals(SFSessionProperty.PROXY_HOST.getPropertyKey()) ||
+            key.equals(SFSessionProperty.PROXY_PORT.getPropertyKey()) ||
+            key.equals(SFSessionProperty.NON_PROXY_HOSTS.getPropertyKey()) ||
+            key.equals(SFSessionProperty.PROXY_USER.getPropertyKey()) ||
+            key.equals(SFSessionProperty.PROXY_PASSWORD.getPropertyKey())) {
+          System.out.println("DEBUGSNOWFLAKEPROXY: Found proxy property: " + key + " = " + this.originalProperties.getProperty(key));
+          proxyProperties.put(key, this.originalProperties.getProperty(key));
+        }
+      }
+      
+      System.out.println("DEBUGSNOWFLAKEPROXY: Extracted proxy properties from SnowflakeStreamingIngestClientInternal:");
+      for (Object key : proxyProperties.keySet()) {
+        System.out.println("DEBUGSNOWFLAKEPROXY: " + key + " = " + proxyProperties.get(key));
+      }
+    }
+    
+    // If no proxy properties found in original properties, fall back to system properties
+    if (proxyProperties.isEmpty()) {
+      System.out.println("DEBUGSNOWFLAKEPROXY: No proxy properties found in original properties, falling back to system properties");
+      return HttpUtil.generateProxyPropertiesForJDBC();
+    }
+    
+    return proxyProperties;
   }
 }
