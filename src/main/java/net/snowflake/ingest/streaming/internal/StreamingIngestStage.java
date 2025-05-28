@@ -98,11 +98,41 @@ class StreamingIngestStage {
       String clientName,
       int maxUploadRetries)
       throws SnowflakeSQLException, IOException {
+    this(isTestMode, role, httpClient, requestBuilder, clientName, maxUploadRetries, null);
+  }
+
+  /**
+   * Constructor with proxy properties support
+   *
+   * @param isTestMode whether we're under test mode
+   * @param role Snowflake role used by the Client
+   * @param httpClient http client reference
+   * @param requestBuilder request builder to build the HTTP request
+   * @param clientName the client name
+   * @param maxUploadRetries maximum number of upload retries
+   * @param proxyProperties proxy properties for HTTP client configuration
+   */
+  StreamingIngestStage(
+      boolean isTestMode,
+      String role,
+      CloseableHttpClient httpClient,
+      RequestBuilder requestBuilder,
+      String clientName,
+      int maxUploadRetries,
+      Properties proxyProperties)
+      throws SnowflakeSQLException, IOException {
     this.httpClient = httpClient;
     this.role = role;
     this.requestBuilder = requestBuilder;
     this.clientName = clientName;
-    this.proxyProperties = generateProxyPropertiesForJDBC();
+    this.proxyProperties = proxyProperties != null ? proxyProperties : generateProxyPropertiesForJDBC();
+
+    System.out.println("DEBUGSNOWFLAKEPROXY: StreamingIngestStage constructor - proxyProperties parameter is " + (proxyProperties != null ? "not null" : "null"));
+    System.out.println("DEBUGSNOWFLAKEPROXY: StreamingIngestStage constructor - final proxyProperties contains " + this.proxyProperties.size() + " properties:");
+    for (String key : this.proxyProperties.stringPropertyNames()) {
+      System.out.println("DEBUGSNOWFLAKEPROXY: StreamingIngestStage: Proxy property: " + key + "=" + this.proxyProperties.getProperty(key));
+    }
+
     this.maxUploadRetries = maxUploadRetries;
 
     if (!isTestMode) {
@@ -129,7 +159,7 @@ class StreamingIngestStage {
       SnowflakeFileTransferMetadataWithAge testMetadata,
       int maxRetryCount)
       throws SnowflakeSQLException, IOException {
-    this(isTestMode, role, httpClient, requestBuilder, clientName, maxRetryCount);
+    this(isTestMode, role, httpClient, requestBuilder, clientName, maxRetryCount, null);
     if (!isTestMode) {
       throw new SFException(ErrorCode.INTERNAL_ERROR);
     }
@@ -180,6 +210,9 @@ class StreamingIngestStage {
     InputStream inStream = new ByteArrayInputStream(data);
 
     try {
+      System.out.println("DEBUGSNOWFLAKEPROXY: About to call SnowflakeFileTransferAgent.uploadWithoutConnection");
+      System.out.println("DEBUGSNOWFLAKEPROXY: Proxy properties being passed: " + this.proxyProperties);
+      
       SnowflakeFileTransferAgent.uploadWithoutConnection(
           SnowflakeFileTransferConfig.Builder.newInstance()
               .setSnowflakeFileTransferMetadata(fileTransferMetadataCopy)
@@ -386,9 +419,15 @@ class StreamingIngestStage {
    * @param blob
    */
   void put(String filePath, byte[] blob) {
+    System.out.println("DEBUGSNOWFLAKEPROXY: StreamingIngestStage.put() called");
+    System.out.println("DEBUGSNOWFLAKEPROXY: isLocalFS() = " + this.isLocalFS());
+    System.out.println("DEBUGSNOWFLAKEPROXY: fileTransferMetadataWithAge.isLocalFS = " + this.fileTransferMetadataWithAge.isLocalFS);
+    
     if (this.isLocalFS()) {
+      System.out.println("DEBUGSNOWFLAKEPROXY: Using LOCAL filesystem - calling putLocal()");
       putLocal(filePath, blob);
     } else {
+      System.out.println("DEBUGSNOWFLAKEPROXY: Using REMOTE storage - calling putRemote()");
       try {
         putRemote(filePath, blob);
       } catch (SnowflakeSQLException | IOException e) {
