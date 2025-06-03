@@ -116,9 +116,7 @@ public class HttpUtil {
 
     HttpClientSettingsKey key = createHttpClientSettingsKey(accountName, proxyProperties);
 
-    return httpClientCache.computeIfAbsent(key, k -> {
-      return buildHttpClient(k);
-    });
+    return httpClientCache.computeIfAbsent(key, HttpUtil::buildHttpClient);
   }
 
   /**
