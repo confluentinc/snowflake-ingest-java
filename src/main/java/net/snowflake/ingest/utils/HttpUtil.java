@@ -10,8 +10,10 @@ import java.security.Security;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
@@ -66,7 +68,8 @@ public class HttpUtil {
    */
   private static final int MAX_RETRIES = 10;
 
-  private static volatile CloseableHttpClient httpClient;
+  private static final Map<HttpClientSettingsKey, CloseableHttpClient> httpClientCache =
+      new ConcurrentHashMap<>();
 
   private static PoolingHttpClientConnectionManager connectionManager;
 
@@ -100,28 +103,85 @@ public class HttpUtil {
   // Only connections that are currently owned, not checked out, are subject to idle timeouts.
   private static final int DEFAULT_IDLE_CONNECTION_TIMEOUT_SECONDS = 30;
 
+  private static final Logger LOGGER = LoggerFactory.getLogger(HttpUtil.class);
+
   /**
-   * @param {@code String} account name to connect to (excluding snowflakecomputing.com domain)
+   * Get HttpClient with proxy properties support
+   *
+   * @param accountName account name to connect to (excluding snowflakecomputing.com domain)
+   * @param proxyProperties proxy properties, can be null
+   * @return Instance of CloseableHttpClient
+   */
+  public static CloseableHttpClient getHttpClient(String accountName, Properties proxyProperties) {
+
+    HttpClientSettingsKey key = createHttpClientSettingsKey(accountName, proxyProperties);
+
+    return httpClientCache.computeIfAbsent(key, k -> {
+      return buildHttpClient(k);
+    });
+  }
+
+  /**
+   * @param accountName account name to connect to (excluding snowflakecomputing.com domain)
    * @return Instance of CloseableHttpClient
    */
   public static CloseableHttpClient getHttpClient(String accountName) {
-    if (httpClient == null) {
-      synchronized (HttpUtil.class) {
-        if (httpClient == null) {
-          initHttpClient(accountName);
-        }
-      }
-    }
-
-    initIdleConnectionMonitoringThread();
-
-    return httpClient;
+    return getHttpClient(accountName, null);
   }
 
-  private static final Logger LOGGER = LoggerFactory.getLogger(HttpUtil.class);
+  /**
+   * Create HttpClientSettingsKey from account name and proxy properties
+   */
+  private static HttpClientSettingsKey createHttpClientSettingsKey(String accountName, Properties proxyProperties) {
 
-  private static void initHttpClient(String accountName) {
+    if (proxyProperties != null && proxyProperties.containsKey(SFSessionProperty.USE_PROXY.getPropertyKey())) {
 
+      Boolean useProxy = Boolean.valueOf(proxyProperties.getProperty(SFSessionProperty.USE_PROXY.getPropertyKey()));
+
+      if (useProxy) {
+        String proxyHost = proxyProperties.getProperty(SFSessionProperty.PROXY_HOST.getPropertyKey(), "");
+        String proxyPortStr = proxyProperties.getProperty(SFSessionProperty.PROXY_PORT.getPropertyKey(), "0");
+        int proxyPort = 0;
+        try {
+          proxyPort = Integer.parseInt(proxyPortStr);
+        } catch (NumberFormatException e) {
+          throw new IllegalArgumentException(
+              "Invalid proxy port: '" + proxyPortStr + "'. Proxy port must be a valid integer.", e);
+        }
+        String nonProxyHosts = proxyProperties.getProperty(SFSessionProperty.NON_PROXY_HOSTS.getPropertyKey(), "");
+        String proxyUser = proxyProperties.getProperty(SFSessionProperty.PROXY_USER.getPropertyKey(), "");
+        String proxyPassword = proxyProperties.getProperty(SFSessionProperty.PROXY_PASSWORD.getPropertyKey(), "");
+        
+        return new HttpClientSettingsKey(accountName, proxyHost, proxyPort, nonProxyHosts, proxyUser, proxyPassword);
+      }
+    }
+    
+    // Check system properties for proxy configuration (backward compatibility)
+    if ("true".equalsIgnoreCase(System.getProperty(USE_PROXY)) && !shouldBypassProxy(accountName)) {
+      String proxyHost = System.getProperty(PROXY_HOST, "");
+      String proxyPortStr = System.getProperty(PROXY_PORT, "0");
+      int proxyPort = 0;
+      try {
+        proxyPort = Integer.parseInt(proxyPortStr);
+      } catch (NumberFormatException e) {
+        throw new IllegalArgumentException(
+            "Invalid proxy port: '" + proxyPortStr + "'. Proxy port must be a valid integer.", e);
+      }
+      String nonProxyHosts = System.getProperty(NON_PROXY_HOSTS, "");
+      String proxyUser = System.getProperty(HTTP_PROXY_USER, "");
+      String proxyPassword = System.getProperty(HTTP_PROXY_PASSWORD, "");
+      
+      return new HttpClientSettingsKey(accountName, proxyHost, proxyPort, nonProxyHosts, proxyUser, proxyPassword);
+    }
+    
+    // No proxy configuration
+    return new HttpClientSettingsKey(accountName);
+  }
+
+  /**
+   * Build HttpClient based on the settings key
+   */
+  private static CloseableHttpClient buildHttpClient(HttpClientSettingsKey key) {
     Security.setProperty("ocsp.enable", "true");
 
     SSLContext sslContext = SSLContexts.createDefault();
@@ -167,24 +227,25 @@ public class HttpUtil {
             .setDefaultRequestConfig(requestConfig);
 
     // proxy settings
-    if ("true".equalsIgnoreCase(System.getProperty(USE_PROXY)) && !shouldBypassProxy(accountName)) {
-      if (System.getProperty(PROXY_PORT) == null) {
-        throw new IllegalArgumentException(
-            "proxy port number is not provided, please assign proxy port to http.proxyPort option");
-      }
-      if (System.getProperty(PROXY_HOST) == null) {
+    if (key.usesProxy()) {
+      if (isNullOrEmpty(key.getProxyHost())) {
         throw new IllegalArgumentException(
             "proxy host IP is not provided, please assign proxy host IP to http.proxyHost option");
       }
-      String proxyHost = System.getProperty(PROXY_HOST);
-      int proxyPort = Integer.parseInt(System.getProperty(PROXY_PORT));
+      if (key.getProxyPort() <= 0) {
+        throw new IllegalArgumentException(
+            "proxy port number is not provided, please assign proxy port to http.proxyPort option");
+      }
+      
+      String proxyHost = key.getProxyHost();
+      int proxyPort = key.getProxyPort();
       HttpHost proxy = new HttpHost(proxyHost, proxyPort, PROXY_SCHEME);
       DefaultProxyRoutePlanner routePlanner = new DefaultProxyRoutePlanner(proxy);
       clientBuilder = clientBuilder.setRoutePlanner(routePlanner);
 
       // Check if proxy username and password are set
-      final String proxyUser = System.getProperty(HTTP_PROXY_USER);
-      final String proxyPassword = System.getProperty(HTTP_PROXY_PASSWORD);
+      final String proxyUser = key.getProxyUser();
+      final String proxyPassword = key.getProxyPassword();
       if (!isNullOrEmpty(proxyUser) && !isNullOrEmpty(proxyPassword)) {
         Credentials credentials = new UsernamePasswordCredentials(proxyUser, proxyPassword);
         AuthScope authScope = new AuthScope(proxyHost, proxyPort);
@@ -194,7 +255,9 @@ public class HttpUtil {
       }
     }
 
-    httpClient = clientBuilder.build();
+    CloseableHttpClient httpClient = clientBuilder.build();
+    initIdleConnectionMonitoringThread();
+    return httpClient;
   }
 
   /** Starts a daemon thread to monitor idle connections in http connection manager. */
@@ -420,7 +483,31 @@ public class HttpUtil {
 
   /** Shuts down the daemon thread. */
   public static void shutdownHttpConnectionManagerDaemonThread() {
-    idleConnectionMonitorThread.shutdown();
+    idleConnectionMonitorThreadLock.lock();
+    try {
+      if (idleConnectionMonitorThread != null) {
+        idleConnectionMonitorThread.shutdown();
+        idleConnectionMonitorThread = null;
+      }
+    } finally {
+      idleConnectionMonitorThreadLock.unlock();
+    }
+  }
+
+  /**
+   * Close all cached HTTP clients and clear the cache
+   */
+  public static void closeAllHttpClients() {
+    LOGGER.debug("Closing all cached HTTP clients");
+    for (Map.Entry<HttpClientSettingsKey, CloseableHttpClient> entry : httpClientCache.entrySet()) {
+      try {
+        entry.getValue().close();
+      } catch (Exception e) {
+        LOGGER.warn("Error closing HTTP client for key: {}", entry.getKey(), e);
+      }
+    }
+    httpClientCache.clear();
+    shutdownHttpConnectionManagerDaemonThread();
   }
 
   /** Create Pool stats for a route */
