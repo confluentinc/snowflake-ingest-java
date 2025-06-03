@@ -386,7 +386,7 @@ public class SimpleIngestManager implements AutoCloseable {
   }
 
 
-  /* Constructor which supports userAgentSuffix and proxyProperties */
+  /* Another flavor of constructor which supports userAgentSuffix and proxyProperties */
   public SimpleIngestManager(
     String account,
     String user,
@@ -421,7 +421,7 @@ public class SimpleIngestManager implements AutoCloseable {
    * @param keyPair the KeyPair we'll use to sign JWT tokens
    */
   private void init(String account, String user, String pipe, KeyPair keyPair) {
-    init(account, user, pipe, keyPair, null);
+    init(account, user, pipe, keyPair, new Properties());
   }
 
   /**

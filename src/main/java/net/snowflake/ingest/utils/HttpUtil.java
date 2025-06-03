@@ -145,7 +145,8 @@ public class HttpUtil {
         try {
           proxyPort = Integer.parseInt(proxyPortStr);
         } catch (NumberFormatException e) {
-          LOGGER.warn("Invalid proxy port: {}, using default 0", proxyPortStr);
+          throw new IllegalArgumentException(
+              "Invalid proxy port: '" + proxyPortStr + "'. Proxy port must be a valid integer.", e);
         }
         String nonProxyHosts = proxyProperties.getProperty(SFSessionProperty.NON_PROXY_HOSTS.getPropertyKey(), "");
         String proxyUser = proxyProperties.getProperty(SFSessionProperty.PROXY_USER.getPropertyKey(), "");
@@ -163,7 +164,8 @@ public class HttpUtil {
       try {
         proxyPort = Integer.parseInt(proxyPortStr);
       } catch (NumberFormatException e) {
-        LOGGER.warn("Invalid proxy port: {}, using default 0", proxyPortStr);
+        throw new IllegalArgumentException(
+            "Invalid proxy port: '" + proxyPortStr + "'. Proxy port must be a valid integer.", e);
       }
       String nonProxyHosts = System.getProperty(NON_PROXY_HOSTS, "");
       String proxyUser = System.getProperty(HTTP_PROXY_USER, "");
