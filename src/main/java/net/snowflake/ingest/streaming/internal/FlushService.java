@@ -167,7 +167,8 @@ class FlushService<T> {
               client.getHttpClient(),
               client.getRequestBuilder(),
               client.getName(),
-              DEFAULT_MAX_UPLOAD_RETRIES);
+              DEFAULT_MAX_UPLOAD_RETRIES,
+              client.getProxyProperties());
     } catch (SnowflakeSQLException | IOException err) {
       throw new SFException(err, ErrorCode.UNABLE_TO_CONNECT_TO_STAGE);
     }
