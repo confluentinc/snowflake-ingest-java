@@ -70,11 +70,11 @@ blocks:
         - name: Snapshot Release
           commands:
             - export COMMIT_SHA=$(git rev-parse --short HEAD)
-            - echo "Commit SHA: ${COMMIT_SHA}"
+            - echo "Commit SHA - ${COMMIT_SHA}"
             - export CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
-            - echo "Current version: ${CURRENT_VERSION}"
+            - echo "Current version - ${CURRENT_VERSION}"
             - mvn versions:set -DnewVersion="${CURRENT_VERSION}-${COMMIT_SHA}-SNAPSHOT" -DgenerateBackupPoms=false
-            - echo "New version: ${CURRENT_VERSION}-${COMMIT_SHA}-SNAPSHOT"
+            - echo "New version - ${CURRENT_VERSION}-${COMMIT_SHA}-SNAPSHOT"
             - >
               mvn -U -Dmaven.wagon.http.retryHandler.count=10 --batch-mode
               -DaltDeploymentRepository=confluent-codeartifact-internal::default::https://confluent-519856050701.d.codeartifact.us-west-2.amazonaws.com/maven/maven-snapshots/
