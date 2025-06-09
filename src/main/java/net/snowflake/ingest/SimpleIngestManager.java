@@ -443,6 +443,12 @@ public class SimpleIngestManager implements AutoCloseable {
     this.keyPair = keyPair;
 
     // make our client for sending requests with proxy properties support
+    if (proxyProperties != null && !proxyProperties.isEmpty()) {
+      LOGGER.info("Creating HTTP client for SimpleIngestManager with proxy properties for account: {}, user: {}", account, user);
+    } else {
+      LOGGER.info("Creating HTTP client for SimpleIngestManager without proxy properties for account: {}, user: {}", account, user);
+    }
+    
     httpClient = HttpUtil.getHttpClient(account, proxyProperties);
     // make the request builder we'll use to build messages to the service
   }

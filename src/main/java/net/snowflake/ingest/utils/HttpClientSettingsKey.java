@@ -8,12 +8,16 @@ import static net.snowflake.ingest.utils.Utils.isNullOrEmpty;
 
 import java.io.Serializable;
 import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * This class defines all parameters needed to create an HttpClient object for the ingest service.
  * It is used as the key for the static hashmap of reusable http clients.
  */
 public class HttpClientSettingsKey implements Serializable {
+
+  private static final Logger LOGGER = LoggerFactory.getLogger(HttpClientSettingsKey.class);
 
   private boolean useProxy;
   private String proxyHost = "";
@@ -40,6 +44,11 @@ public class HttpClientSettingsKey implements Serializable {
     this.nonProxyHosts = !isNullOrEmpty(nonProxyHosts) ? nonProxyHosts.trim() : "";
     this.proxyUser = !isNullOrEmpty(proxyUser) ? proxyUser.trim() : "";
     this.proxyPassword = !isNullOrEmpty(proxyPassword) ? proxyPassword.trim() : "";
+    
+    LOGGER.debug("Created HttpClientSettingsKey with proxy configuration for account: {}. Host: {}, Port: {}, User: {}, NonProxyHosts: {}", 
+                this.accountName, this.proxyHost, this.proxyPort, 
+                !isNullOrEmpty(this.proxyUser) ? "set" : "not set", 
+                !isNullOrEmpty(this.nonProxyHosts) ? this.nonProxyHosts : "not set");
   }
 
   /**
@@ -48,6 +57,8 @@ public class HttpClientSettingsKey implements Serializable {
   public HttpClientSettingsKey(String accountName) {
     this.useProxy = false;
     this.accountName = !isNullOrEmpty(accountName) ? accountName.trim() : "";
+    
+    LOGGER.debug("Created HttpClientSettingsKey without proxy configuration for account: {}", this.accountName);
   }
 
   @Override

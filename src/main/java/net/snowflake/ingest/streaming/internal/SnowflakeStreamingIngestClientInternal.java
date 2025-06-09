@@ -178,7 +178,7 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
     this.name = name;
     String accountName = accountURL == null ? null : accountURL.getAccount();
     this.isTestMode = isTestMode;
-    this.httpClient = httpClient == null ? HttpUtil.getHttpClient(accountName, prop) : httpClient;
+    this.httpClient = (httpClient != null) ? httpClient : HttpUtil.getHttpClient(accountName, prop);
     this.channelCache = new ChannelCache<>();
     this.isClosed = false;
     this.requestBuilder = requestBuilder;
@@ -1119,6 +1119,7 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
 
     // If no proxy properties found in original properties, fall back to system properties
     if (proxyProperties.isEmpty()) {
+      logger.logInfo("Falling back to system properties for proxy configuration for client: {}", this.name);
       return HttpUtil.generateProxyPropertiesForJDBC();
     }
 
