@@ -143,6 +143,9 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
   // Background thread that uploads telemetry data periodically
   private ScheduledExecutorService telemetryWorker;
 
+  // Store original properties for proxy configuration
+  private final Properties originalProperties;
+
   // Snowflake service client to make API calls
   private SnowflakeServiceClient snowflakeServiceClient;
 
@@ -167,14 +170,15 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
       RequestBuilder requestBuilder,
       Map<String, Object> parameterOverrides) {
     this.parameterProvider = new ParameterProvider(parameterOverrides, prop);
+    this.originalProperties = prop;
     this.internalParameterProvider =
-        new InternalParameterProvider(
-            parameterProvider.isEnableIcebergStreaming(), false /* enableNDVCount */);
+            new InternalParameterProvider(
+                    parameterProvider.isEnableIcebergStreaming(), false /* enableNDVCount */);
 
     this.name = name;
     String accountName = accountURL == null ? null : accountURL.getAccount();
     this.isTestMode = isTestMode;
-    this.httpClient = httpClient == null ? HttpUtil.getHttpClient(accountName) : httpClient;
+    this.httpClient = httpClient == null ? HttpUtil.getHttpClient(accountName, prop) : httpClient;
     this.channelCache = new ChannelCache<>();
     this.isClosed = false;
     this.requestBuilder = requestBuilder;
@@ -1088,6 +1092,40 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
       HttpUtil.shutdownHttpConnectionManagerDaemonThread();
     }
   }
+
+
+  /**
+   * Extract proxy properties from the original Properties object
+   *
+   * @return Properties containing proxy configuration
+   */
+  Properties getProxyProperties() {
+    Properties proxyProperties = new Properties();
+
+
+    if (this.originalProperties != null) {
+
+      for (String key : this.originalProperties.stringPropertyNames()) {
+        if (key.equals(SFSessionProperty.USE_PROXY.getPropertyKey()) ||
+                key.equals(SFSessionProperty.PROXY_HOST.getPropertyKey()) ||
+                key.equals(SFSessionProperty.PROXY_PORT.getPropertyKey()) ||
+                key.equals(SFSessionProperty.NON_PROXY_HOSTS.getPropertyKey()) ||
+                key.equals(SFSessionProperty.PROXY_USER.getPropertyKey()) ||
+                key.equals(SFSessionProperty.PROXY_PASSWORD.getPropertyKey())) {
+          proxyProperties.put(key, this.originalProperties.getProperty(key));
+        }
+      }
+    }
+
+    // If no proxy properties found in original properties, fall back to system properties
+    if (proxyProperties.isEmpty()) {
+      return HttpUtil.generateProxyPropertiesForJDBC();
+    }
+
+    return proxyProperties;
+  }
+
+
 
   public Map<FullyQualifiedTableName, EncryptionKey> getEncryptionKeysPerTable() {
     return encryptionKeysPerTable;
