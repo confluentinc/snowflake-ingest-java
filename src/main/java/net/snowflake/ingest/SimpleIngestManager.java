@@ -195,7 +195,6 @@ public class SimpleIngestManager implements AutoCloseable {
   private static final Logger LOGGER = LoggerFactory.getLogger(SimpleIngestManager.class);
   // HTTP Client that we use for sending requests to the service
   private CloseableHttpClient httpClient;
-  private boolean httpClientClosed = false;
 
   // the account in which the user lives
   private String account;
@@ -435,20 +434,25 @@ public class SimpleIngestManager implements AutoCloseable {
    * @param keyPair the KeyPair we'll use to sign JWT tokens
    * @param proxyProperties proxy properties for HTTP client configuration
    */
-  private void init(String account, String user, String pipe, KeyPair keyPair, Properties proxyProperties) {
+  private void init(
+      String account, String user, String pipe, KeyPair keyPair, Properties proxyProperties) {
     // set up our reference variables
     this.account = account;
     this.user = user;
     this.pipe = pipe;
     this.keyPair = keyPair;
 
-    // make our client for sending requests with proxy properties support
     if (proxyProperties != null && !proxyProperties.isEmpty()) {
-      LOGGER.info("Creating HTTP client for SimpleIngestManager with proxy properties for account: {}, user: {}", account, user);
+      LOGGER.info(
+          "SimpleIngestManager initialized with proxy properties for account {}. Keys: {}",
+          account,
+          proxyProperties.stringPropertyNames());
     } else {
-      LOGGER.info("Creating HTTP client for SimpleIngestManager without proxy properties for account: {}, user: {}", account, user);
+      LOGGER.info(
+          "SimpleIngestManager initialized without proxy properties for account {}.", account);
     }
-    
+
+    // make our client for sending requests with proxy properties support
     httpClient = HttpUtil.getHttpClient(account, proxyProperties);
     // make the request builder we'll use to build messages to the service
   }
@@ -654,6 +658,11 @@ public class SimpleIngestManager implements AutoCloseable {
   @Override
   public void close() {
     builder.closeResources();
+    try {
+      httpClient.close();
+    } catch (IOException e) {
+      LOGGER.error("Error closing http client", e);
+    }
     HttpUtil.shutdownHttpConnectionManagerDaemonThread();
   }
 
