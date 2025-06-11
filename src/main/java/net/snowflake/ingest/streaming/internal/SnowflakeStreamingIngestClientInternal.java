@@ -170,6 +170,16 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
     this.name = name;
     String accountName = accountURL == null ? null : accountURL.getAccount();
     this.isTestMode = isTestMode;
+    if (prop != null && !prop.isEmpty()) {
+      logger.logInfo(
+          "SnowflakeStreamingIngestClientInternal initialized for account {} with properties. Keys: {}",
+          accountName,
+          prop.stringPropertyNames());
+    } else {
+      logger.logInfo(
+          "SnowflakeStreamingIngestClientInternal initialized for account {} without properties.",
+          accountName);
+    }
     this.httpClient = HttpUtil.getHttpClient(accountName, prop);
     this.channelCache = new ChannelCache<>();
     this.isClosed = false;

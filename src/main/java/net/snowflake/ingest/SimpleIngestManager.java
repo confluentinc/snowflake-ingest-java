@@ -434,12 +434,23 @@ public class SimpleIngestManager implements AutoCloseable {
    * @param keyPair the KeyPair we'll use to sign JWT tokens
    * @param proxyProperties proxy properties for HTTP client configuration
    */
-  private void init(String account, String user, String pipe, KeyPair keyPair, Properties proxyProperties) {
+  private void init(
+      String account, String user, String pipe, KeyPair keyPair, Properties proxyProperties) {
     // set up our reference variables
     this.account = account;
     this.user = user;
     this.pipe = pipe;
     this.keyPair = keyPair;
+
+    if (proxyProperties != null && !proxyProperties.isEmpty()) {
+      LOGGER.info(
+          "SimpleIngestManager initialized with proxy properties for account {}. Keys: {}",
+          account,
+          proxyProperties.stringPropertyNames());
+    } else {
+      LOGGER.info(
+          "SimpleIngestManager initialized without proxy properties for account {}.", account);
+    }
 
     // make our client for sending requests with proxy properties support
     httpClient = HttpUtil.getHttpClient(account, proxyProperties);

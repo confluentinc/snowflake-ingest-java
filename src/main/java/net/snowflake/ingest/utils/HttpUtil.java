@@ -116,6 +116,14 @@ public class HttpUtil {
 
     HttpClientSettingsKey key = createHttpClientSettingsKey(accountName, proxyProperties);
 
+    // todo: remove after testing
+    CloseableHttpClient client = httpClientCache.get(key);
+    if (client != null) {
+      LOGGER.info("Reusing existing HttpClient for key {}", key);
+      return client;
+    }
+    
+    LOGGER.info("Creating new HttpClient for key {}", key);
     return httpClientCache.computeIfAbsent(key, HttpUtil::buildHttpClient);
   }
 
