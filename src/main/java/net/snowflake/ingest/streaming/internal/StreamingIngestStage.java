@@ -98,11 +98,34 @@ class StreamingIngestStage {
       String clientName,
       int maxUploadRetries)
       throws SnowflakeSQLException, IOException {
+    this(isTestMode, role, httpClient, requestBuilder, clientName, maxUploadRetries, null);
+  }
+
+  /**
+   * Constructor with proxy properties support
+   *
+   * @param isTestMode whether we're under test mode
+   * @param role Snowflake role used by the Client
+   * @param httpClient http client reference
+   * @param requestBuilder request builder to build the HTTP request
+   * @param clientName the client name
+   * @param maxUploadRetries maximum number of upload retries
+   * @param proxyProperties proxy properties for HTTP client configuration
+   */
+  StreamingIngestStage(
+      boolean isTestMode,
+      String role,
+      CloseableHttpClient httpClient,
+      RequestBuilder requestBuilder,
+      String clientName,
+      int maxUploadRetries,
+      Properties proxyProperties)
+      throws SnowflakeSQLException, IOException {
     this.httpClient = httpClient;
     this.role = role;
     this.requestBuilder = requestBuilder;
     this.clientName = clientName;
-    this.proxyProperties = generateProxyPropertiesForJDBC();
+    this.proxyProperties = proxyProperties != null ? proxyProperties : generateProxyPropertiesForJDBC();
     this.maxUploadRetries = maxUploadRetries;
 
     if (!isTestMode) {
@@ -129,7 +152,7 @@ class StreamingIngestStage {
       SnowflakeFileTransferMetadataWithAge testMetadata,
       int maxRetryCount)
       throws SnowflakeSQLException, IOException {
-    this(isTestMode, role, httpClient, requestBuilder, clientName, maxRetryCount);
+    this(isTestMode, role, httpClient, requestBuilder, clientName, maxRetryCount, null);
     if (!isTestMode) {
       throw new SFException(ErrorCode.INTERNAL_ERROR);
     }
