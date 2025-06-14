@@ -537,6 +537,7 @@ public class HttpUtil {
    * Close all cached HTTP clients and clear the cache
    */
   public static void closeAllHttpClients() {
+    // for use in test
     LOGGER.info("Closing all cached HTTP clients. Total clients in cache: {}", httpClientCache.size());
     for (Map.Entry<HttpClientSettingsKey, CloseableHttpClient> entry : httpClientCache.entrySet()) {
       try {
@@ -570,6 +571,16 @@ public class HttpUtil {
   /**
    * Changes the account name to the format accountName.snowflakecomputing.com then returns a
    * boolean to indicate if we should go through a proxy or not.
+   * This is a convenience method for existing tests that calls the two-parameter version with null properties.
+   */
+  public static Boolean shouldBypassProxy(String accountName) {
+    return shouldBypassProxy(accountName, null);
+  }
+
+  /**
+   * Changes the account name to the format accountName.snowflakecomputing.com then returns a
+   * boolean to indicate if we should go through a proxy or not.
+   * Checks both system properties and provided proxy properties for non-proxy hosts configuration.
    */
   public static Boolean shouldBypassProxy(String accountName, Properties proxyProperties) {
     String targetHost = accountName + SNOWFLAKE_DOMAIN_NAME;
