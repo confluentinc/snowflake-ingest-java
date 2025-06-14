@@ -158,6 +158,11 @@ public class HttpUtil {
         String proxyUser = proxyProperties.getProperty(SFSessionProperty.PROXY_USER.getPropertyKey(), "");
         String proxyPassword = proxyProperties.getProperty(SFSessionProperty.PROXY_PASSWORD.getPropertyKey(), "");
         
+        if (shouldBypassProxy(accountName, proxyProperties)) {
+          LOGGER.info("Account {} matches nonProxyHosts pattern from system properties. Bypassing proxy despite proxyProperties configuration.", accountName);
+          return new HttpClientSettingsKey(accountName);
+        }
+        
         LOGGER.info("Creating HTTP client settings key with proxy configuration from properties for account: {}. Proxy host: {}, port: {}, user: {}, nonProxyHosts: {}", 
                    accountName, proxyHost, proxyPort, isNullOrEmpty(proxyUser) ? "not set" : "set", isNullOrEmpty(nonProxyHosts) ? "not set" : nonProxyHosts);
         return new HttpClientSettingsKey(accountName, proxyHost, proxyPort, nonProxyHosts, proxyUser, proxyPassword);
@@ -167,7 +172,7 @@ public class HttpUtil {
     }
     
     // Check system properties for proxy configuration (backward compatibility)
-    if ("true".equalsIgnoreCase(System.getProperty(USE_PROXY)) && !shouldBypassProxy(accountName)) {
+    if ("true".equalsIgnoreCase(System.getProperty(USE_PROXY)) && !shouldBypassProxy(accountName, proxyProperties)) {
       String proxyHost = System.getProperty(PROXY_HOST, "");
       String proxyPortStr = System.getProperty(PROXY_PORT, "0");
       int proxyPort = 0;
@@ -566,31 +571,40 @@ public class HttpUtil {
    * Changes the account name to the format accountName.snowflakecomputing.com then returns a
    * boolean to indicate if we should go through a proxy or not.
    */
-  public static Boolean shouldBypassProxy(String accountName) {
+  public static Boolean shouldBypassProxy(String accountName, Properties proxyProperties) {
     String targetHost = accountName + SNOWFLAKE_DOMAIN_NAME;
-    boolean shouldBypass = System.getProperty(NON_PROXY_HOSTS) != null && isInNonProxyHosts(targetHost);
     
-    if (shouldBypass) {
-      LOGGER.info("Account {} ({}) matches nonProxyHosts pattern. Bypassing proxy.", accountName, targetHost);
-    } else {
-      LOGGER.debug("Account {} ({}) does not match nonProxyHosts pattern or nonProxyHosts not set.", accountName, targetHost);
+    // Check system properties first
+    String systemNonProxyHosts = System.getProperty(NON_PROXY_HOSTS);
+    if (systemNonProxyHosts != null && isInNonProxyHosts(targetHost, systemNonProxyHosts)) {
+      LOGGER.info("Account {} ({}) matches system nonProxyHosts pattern. Bypassing proxy.", accountName, targetHost);
+      return true;
     }
     
-    return shouldBypass;
+    // Check SFSessionProperty.NON_PROXY_HOSTS from proxyProperties if available
+    if (proxyProperties != null) {
+      String sessionNonProxyHosts = proxyProperties.getProperty(SFSessionProperty.NON_PROXY_HOSTS.getPropertyKey());
+      if (sessionNonProxyHosts != null && isInNonProxyHosts(targetHost, sessionNonProxyHosts)) {
+        LOGGER.info("Account {} ({}) matches session nonProxyHosts pattern. Bypassing proxy.", accountName, targetHost);
+        return true;
+      }
+    }
+    
+    LOGGER.debug("Account {} ({}) does not match any nonProxyHosts pattern.", accountName, targetHost);
+    return false;
   }
 
   /**
    * The target hostname input is compared with the hosts in the '|' separated list provided by the
-   * http.nonProxyHosts parameter using regex. The nonProxyHosts will be used as our Patterns, so we
+   * nonProxyHosts parameter using regex. The nonProxyHosts will be used as our Patterns, so we
    * need to replace the '.' and '*' characters since those are special regex constructs that mean
    * 'any character,' and 'repeat 0 or more times.'
    */
-  private static Boolean isInNonProxyHosts(String targetHost) {
-    String nonProxyHosts =
-        System.getProperty(NON_PROXY_HOSTS).replace(".", "\\.").replace("*", ".*");
-    String[] nonProxyHostsArray = nonProxyHosts.split("\\|");
-    for (String i : nonProxyHostsArray) {
-      if (Pattern.compile(i).matcher(targetHost).matches()) {
+  private static Boolean isInNonProxyHosts(String targetHost, String nonProxyHosts) {
+    String escapedNonProxyHosts = nonProxyHosts.replace(".", "\\.").replace("*", ".*");
+    String[] nonProxyHostsArray = escapedNonProxyHosts.split("\\|");
+    for (String pattern : nonProxyHostsArray) {
+      if (Pattern.compile(pattern).matcher(targetHost).matches()) {
         return true;
       }
     }
