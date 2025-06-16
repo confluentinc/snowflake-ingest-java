@@ -183,12 +183,12 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
                           key.equals("proxyPassword"));
       
       if (hasProxyConfig) {
-        logger.logInfo("Creating HTTP client for SnowflakeStreamingIngestClient with proxy configuration for account: {}, client: {}", accountName, name);
+        logger.logDebug("Creating HTTP client for SnowflakeStreamingIngestClient with proxy configuration for account: {}, client: {}", accountName, name);
       } else {
-        logger.logInfo("Creating HTTP client for SnowflakeStreamingIngestClient without proxy configuration for account: {}, client: {}", accountName, name);
+        logger.logDebug("Creating HTTP client for SnowflakeStreamingIngestClient without proxy configuration for account: {}, client: {}", accountName, name);
       }
     } else {
-      logger.logInfo("Creating HTTP client for SnowflakeStreamingIngestClient with no properties for account: {}, client: {}", accountName, name);
+      logger.logDebug("Creating HTTP client for SnowflakeStreamingIngestClient with no properties for account: {}, client: {}", accountName, name);
     }
     
     this.httpClient = (httpClient != null) ? httpClient : HttpUtil.getHttpClient(accountName, prop);
@@ -1124,21 +1124,20 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
       }
       
       if (!proxyProperties.isEmpty()) {
-        logger.logInfo("Extracted {} proxy properties from original properties for client: {}", proxyProperties.size(), this.name);
-        logger.logDebug("Proxy properties extracted: {}", 
+        logger.logTrace("Proxy properties extracted: {}",
                        proxyProperties.keySet().stream()
                            .map(k -> k + "=" + (k.toString().toLowerCase().contains("password") ? "[HIDDEN]" : proxyProperties.get(k)))
                            .collect(Collectors.joining(", ")));
       } else {
-        logger.logInfo("No proxy properties found in original properties for client: {}", this.name);
+        logger.logDebug("No proxy properties found in original properties for client: {}", this.name);
       }
     } else {
-      logger.logInfo("Original properties is null, cannot extract proxy properties for client: {}", this.name);
+      logger.logDebug("Original properties is null, cannot extract proxy properties for client: {}", this.name);
     }
     
     // If no proxy properties found in original properties, fall back to system properties
     if (proxyProperties.isEmpty()) {
-      logger.logInfo("Falling back to system properties for proxy configuration for client: {}", this.name);
+      logger.logDebug("Falling back to system properties for proxy configuration for client: {}", this.name);
       return HttpUtil.generateProxyPropertiesForJDBC();
     }
     

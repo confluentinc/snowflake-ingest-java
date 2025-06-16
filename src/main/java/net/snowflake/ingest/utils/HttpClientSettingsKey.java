@@ -45,7 +45,7 @@ public class HttpClientSettingsKey implements Serializable {
     this.proxyUser = !isNullOrEmpty(proxyUser) ? proxyUser.trim() : "";
     this.proxyPassword = !isNullOrEmpty(proxyPassword) ? proxyPassword.trim() : "";
 
-    LOGGER.debug("Created HttpClientSettingsKey with proxy configuration for account: {}. Host: {}, Port: {}, User: {}, NonProxyHosts: {}",
+    LOGGER.trace("Created HttpClientSettingsKey with proxy configuration for account: {}. Host: {}, Port: {}, User: {}, NonProxyHosts: {}",
             this.accountName, this.proxyHost, this.proxyPort,
             !isNullOrEmpty(this.proxyUser) ? "set" : "not set",
             !isNullOrEmpty(this.nonProxyHosts) ? this.nonProxyHosts : "not set");
