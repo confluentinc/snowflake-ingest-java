@@ -139,7 +139,12 @@ public class Utils {
           privateKeyPassphrase = val;
           break;
         default:
-          properties.put(key.toLowerCase(), val);
+          // Preserve case for proxy-related properties that HttpUtil expects
+          if (isProxyRelatedProperty(key)) {
+            properties.put(key, val);
+          } else {
+            properties.put(key.toLowerCase(), val);
+          }
       }
     }
 
@@ -213,6 +218,17 @@ public class Utils {
     properties.put(SFSessionProperty.ALLOW_UNDERSCORES_IN_HOST.getPropertyKey(), "true");
 
     return properties;
+  }
+
+  /** Check if a property key is proxy-related and should preserve its case */
+  private static boolean isProxyRelatedProperty(String key) {
+    return key.equals(SFSessionProperty.USE_PROXY.getPropertyKey())
+        || key.equals(SFSessionProperty.PROXY_HOST.getPropertyKey())
+        || key.equals(SFSessionProperty.PROXY_PORT.getPropertyKey())
+        || key.equals(SFSessionProperty.PROXY_USER.getPropertyKey())
+        || key.equals(SFSessionProperty.PROXY_PASSWORD.getPropertyKey())
+        || key.equals(SFSessionProperty.NON_PROXY_HOSTS.getPropertyKey())
+        || key.equals(SFSessionProperty.PROXY_PROTOCOL.getPropertyKey());
   }
 
   /** Construct account url from input schema, host and port */
