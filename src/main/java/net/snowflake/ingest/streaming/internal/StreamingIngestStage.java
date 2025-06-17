@@ -125,7 +125,8 @@ class StreamingIngestStage {
     this.role = role;
     this.requestBuilder = requestBuilder;
     this.clientName = clientName;
-    this.proxyProperties = proxyProperties != null ? proxyProperties : generateProxyPropertiesForJDBC();
+    this.proxyProperties =
+        proxyProperties != null ? proxyProperties : generateProxyPropertiesForJDBC();
     this.maxUploadRetries = maxUploadRetries;
 
     if (!isTestMode) {
