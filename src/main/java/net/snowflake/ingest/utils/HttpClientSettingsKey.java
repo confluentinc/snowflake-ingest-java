@@ -27,16 +27,14 @@ public class HttpClientSettingsKey implements Serializable {
   private String proxyPassword = "";
   private String accountName = "";
 
-  /**
-   * Constructor for proxy configuration
-   */
+  /** Constructor for proxy configuration */
   public HttpClientSettingsKey(
-          String accountName,
-          String proxyHost,
-          int proxyPort,
-          String nonProxyHosts,
-          String proxyUser,
-          String proxyPassword) {
+      String accountName,
+      String proxyHost,
+      int proxyPort,
+      String nonProxyHosts,
+      String proxyUser,
+      String proxyPassword) {
     this.useProxy = true;
     this.accountName = !isNullOrEmpty(accountName) ? accountName.trim() : "";
     this.proxyHost = !isNullOrEmpty(proxyHost) ? proxyHost.trim() : "";
@@ -45,20 +43,24 @@ public class HttpClientSettingsKey implements Serializable {
     this.proxyUser = !isNullOrEmpty(proxyUser) ? proxyUser.trim() : "";
     this.proxyPassword = !isNullOrEmpty(proxyPassword) ? proxyPassword.trim() : "";
 
-    LOGGER.trace("Created HttpClientSettingsKey with proxy configuration for account: {}. Host: {}, Port: {}, User: {}, NonProxyHosts: {}",
-            this.accountName, this.proxyHost, this.proxyPort,
-            !isNullOrEmpty(this.proxyUser) ? "set" : "not set",
-            !isNullOrEmpty(this.nonProxyHosts) ? this.nonProxyHosts : "not set");
+    LOGGER.trace(
+        "Created HttpClientSettingsKey with proxy configuration for account: {}. Host: {}, Port:"
+            + " {}, User: {}, NonProxyHosts: {}",
+        this.accountName,
+        this.proxyHost,
+        this.proxyPort,
+        !isNullOrEmpty(this.proxyUser) ? "set" : "not set",
+        !isNullOrEmpty(this.nonProxyHosts) ? this.nonProxyHosts : "not set");
   }
 
-  /**
-   * Constructor for non-proxy configuration
-   */
+  /** Constructor for non-proxy configuration */
   public HttpClientSettingsKey(String accountName) {
     this.useProxy = false;
     this.accountName = !isNullOrEmpty(accountName) ? accountName.trim() : "";
 
-    LOGGER.debug("Created HttpClientSettingsKey without proxy configuration for account: {}", this.accountName);
+    LOGGER.debug(
+        "Created HttpClientSettingsKey without proxy configuration for account: {}",
+        this.accountName);
   }
 
   @Override
@@ -68,18 +70,19 @@ public class HttpClientSettingsKey implements Serializable {
 
     HttpClientSettingsKey that = (HttpClientSettingsKey) obj;
 
-    return useProxy == that.useProxy &&
-            proxyPort == that.proxyPort &&
-            Objects.equals(accountName, that.accountName) &&
-            Objects.equals(proxyHost, that.proxyHost) &&
-            Objects.equals(nonProxyHosts, that.nonProxyHosts) &&
-            Objects.equals(proxyUser, that.proxyUser) &&
-            Objects.equals(proxyPassword, that.proxyPassword);
+    return useProxy == that.useProxy
+        && proxyPort == that.proxyPort
+        && Objects.equals(accountName, that.accountName)
+        && Objects.equals(proxyHost, that.proxyHost)
+        && Objects.equals(nonProxyHosts, that.nonProxyHosts)
+        && Objects.equals(proxyUser, that.proxyUser)
+        && Objects.equals(proxyPassword, that.proxyPassword);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(useProxy, accountName, proxyHost, proxyPort, nonProxyHosts, proxyUser, proxyPassword);
+    return Objects.hash(
+        useProxy, accountName, proxyHost, proxyPort, nonProxyHosts, proxyUser, proxyPassword);
   }
 
   public boolean usesProxy() {
@@ -112,14 +115,25 @@ public class HttpClientSettingsKey implements Serializable {
 
   @Override
   public String toString() {
-    return "HttpClientSettingsKey[" +
-            "accountName='" + accountName + '\'' +
-            ", useProxy=" + useProxy +
-            ", proxyHost='" + proxyHost + '\'' +
-            ", proxyPort=" + proxyPort +
-            ", nonProxyHosts='" + nonProxyHosts + '\'' +
-            ", proxyUser='" + proxyUser + '\'' +
-            ", proxyPassword=" + (proxyPassword.isEmpty() ? "not set" : "set") +
-            ']';
+    return "HttpClientSettingsKey["
+        + "accountName='"
+        + accountName
+        + '\''
+        + ", useProxy="
+        + useProxy
+        + ", proxyHost='"
+        + proxyHost
+        + '\''
+        + ", proxyPort="
+        + proxyPort
+        + ", nonProxyHosts='"
+        + nonProxyHosts
+        + '\''
+        + ", proxyUser='"
+        + proxyUser
+        + '\''
+        + ", proxyPassword="
+        + (proxyPassword.isEmpty() ? "not set" : "set")
+        + ']';
   }
 }

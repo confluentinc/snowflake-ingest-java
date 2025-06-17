@@ -1,6 +1,5 @@
 package net.snowflake.ingest.utils;
 
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertSame;
 
@@ -11,9 +10,9 @@ import org.junit.After;
 import org.junit.Test;
 
 /**
- * Test class for HttpUtil caching functionality.
- * Tests verify that HTTP clients are properly cached based on account name and proxy settings.
- * Note: Both JDBC and streaming clients now use unified SFSessionProperty constants for proxy configuration.
+ * Test class for HttpUtil caching functionality. Tests verify that HTTP clients are properly cached
+ * based on account name and proxy settings. Note: Both JDBC and streaming clients now use unified
+ * SFSessionProperty constants for proxy configuration.
  */
 public class HttpUtilCacheTest {
 
@@ -83,7 +82,8 @@ public class HttpUtilCacheTest {
     CloseableHttpClient client2 = HttpUtil.getHttpClient(accountName, proxyProps2);
 
     // Should return different instances
-    assertNotSame("HTTP clients should be different for different proxy settings", client1, client2);
+    assertNotSame(
+        "HTTP clients should be different for different proxy settings", client1, client2);
   }
 
   @Test
@@ -100,6 +100,9 @@ public class HttpUtilCacheTest {
     CloseableHttpClient clientWithoutProxy = HttpUtil.getHttpClient(accountName);
 
     // Should return different instances
-    assertNotSame("HTTP clients should be different for proxy vs no proxy", clientWithProxy, clientWithoutProxy);
+    assertNotSame(
+        "HTTP clients should be different for proxy vs no proxy",
+        clientWithProxy,
+        clientWithoutProxy);
   }
 }
