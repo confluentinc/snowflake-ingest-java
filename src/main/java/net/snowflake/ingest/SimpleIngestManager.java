@@ -386,29 +386,26 @@ public class SimpleIngestManager implements AutoCloseable {
         new RequestBuilder(account, user, keyPair, schemeName, hostName, port, userAgentSuffix);
   }
 
-
   /* Another flavor of constructor which supports userAgentSuffix and proxyProperties */
   public SimpleIngestManager(
-    String account,
-    String user,
-    String pipe,
-    PrivateKey privateKey,
-    String schemeName,
-    String hostName,
-    int port,
-    String userAgentSuffix,
-    Properties proxyProperties)
-    throws NoSuchAlgorithmException, InvalidKeySpecException {
-  KeyPair keyPair = Utils.createKeyPairFromPrivateKey(privateKey);
-  // call our initializer method
-  init(account, user, pipe, keyPair, proxyProperties);
+      String account,
+      String user,
+      String pipe,
+      PrivateKey privateKey,
+      String schemeName,
+      String hostName,
+      int port,
+      String userAgentSuffix,
+      Properties proxyProperties)
+      throws NoSuchAlgorithmException, InvalidKeySpecException {
+    KeyPair keyPair = Utils.createKeyPairFromPrivateKey(privateKey);
+    // call our initializer method
+    init(account, user, pipe, keyPair, proxyProperties);
 
-  // make the request builder we'll use to build messages to the service
-  builder =
-      new RequestBuilder(account, user, keyPair, schemeName, hostName, port, userAgentSuffix);
-}
-
-  
+    // make the request builder we'll use to build messages to the service
+    builder =
+        new RequestBuilder(account, user, keyPair, schemeName, hostName, port, userAgentSuffix);
+  }
 
   // ========= Constructors End =========
 
@@ -435,7 +432,8 @@ public class SimpleIngestManager implements AutoCloseable {
    * @param keyPair the KeyPair we'll use to sign JWT tokens
    * @param proxyProperties proxy properties for HTTP client configuration
    */
-  private void init(String account, String user, String pipe, KeyPair keyPair, Properties proxyProperties) {
+  private void init(
+      String account, String user, String pipe, KeyPair keyPair, Properties proxyProperties) {
     // set up our reference variables
     this.account = account;
     this.user = user;
@@ -444,11 +442,19 @@ public class SimpleIngestManager implements AutoCloseable {
 
     // make our client for sending requests with proxy properties support
     if (proxyProperties != null && !proxyProperties.isEmpty()) {
-      LOGGER.debug("Creating HTTP client for SimpleIngestManager with proxy properties for account: {}, user: {}", account, user);
+      LOGGER.debug(
+          "Creating HTTP client for SimpleIngestManager with proxy properties for account: {},"
+              + " user: {}",
+          account,
+          user);
     } else {
-      LOGGER.debug("Creating HTTP client for SimpleIngestManager without proxy properties for account: {}, user: {}", account, user);
+      LOGGER.debug(
+          "Creating HTTP client for SimpleIngestManager without proxy properties for account: {},"
+              + " user: {}",
+          account,
+          user);
     }
-    
+
     httpClient = HttpUtil.getHttpClient(account, proxyProperties);
     // make the request builder we'll use to build messages to the service
   }

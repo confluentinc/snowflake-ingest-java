@@ -123,7 +123,10 @@ public class HttpUtil {
       return client;
     }
 
-    LOGGER.debug("No existing HTTP client found for account: {}, key: {}. Creating new HTTP client.", accountName, key);
+    LOGGER.debug(
+        "No existing HTTP client found for account: {}, key: {}. Creating new HTTP client.",
+        accountName,
+        key);
     return httpClientCache.computeIfAbsent(key, HttpUtil::buildHttpClient);
   }
 
@@ -135,18 +138,22 @@ public class HttpUtil {
     return getHttpClient(accountName, null);
   }
 
-  /**
-   * Create HttpClientSettingsKey from account name and proxy properties
-   */
-  private static HttpClientSettingsKey createHttpClientSettingsKey(String accountName, Properties proxyProperties) {
+  /** Create HttpClientSettingsKey from account name and proxy properties */
+  private static HttpClientSettingsKey createHttpClientSettingsKey(
+      String accountName, Properties proxyProperties) {
 
-    if (proxyProperties != null && proxyProperties.containsKey(SFSessionProperty.USE_PROXY.getPropertyKey())) {
+    if (proxyProperties != null
+        && proxyProperties.containsKey(SFSessionProperty.USE_PROXY.getPropertyKey())) {
 
-      Boolean useProxy = Boolean.valueOf(proxyProperties.getProperty(SFSessionProperty.USE_PROXY.getPropertyKey()));
+      Boolean useProxy =
+          Boolean.valueOf(
+              proxyProperties.getProperty(SFSessionProperty.USE_PROXY.getPropertyKey()));
 
       if (useProxy) {
-        String proxyHost = proxyProperties.getProperty(SFSessionProperty.PROXY_HOST.getPropertyKey(), "");
-        String proxyPortStr = proxyProperties.getProperty(SFSessionProperty.PROXY_PORT.getPropertyKey(), "0");
+        String proxyHost =
+            proxyProperties.getProperty(SFSessionProperty.PROXY_HOST.getPropertyKey(), "");
+        String proxyPortStr =
+            proxyProperties.getProperty(SFSessionProperty.PROXY_PORT.getPropertyKey(), "0");
         int proxyPort = 0;
         try {
           proxyPort = Integer.parseInt(proxyPortStr);
@@ -154,25 +161,42 @@ public class HttpUtil {
           throw new IllegalArgumentException(
               "Invalid proxy port: '" + proxyPortStr + "'. Proxy port must be a valid integer.", e);
         }
-        String nonProxyHosts = proxyProperties.getProperty(SFSessionProperty.NON_PROXY_HOSTS.getPropertyKey(), "");
-        String proxyUser = proxyProperties.getProperty(SFSessionProperty.PROXY_USER.getPropertyKey(), "");
-        String proxyPassword = proxyProperties.getProperty(SFSessionProperty.PROXY_PASSWORD.getPropertyKey(), "");
-        
+        String nonProxyHosts =
+            proxyProperties.getProperty(SFSessionProperty.NON_PROXY_HOSTS.getPropertyKey(), "");
+        String proxyUser =
+            proxyProperties.getProperty(SFSessionProperty.PROXY_USER.getPropertyKey(), "");
+        String proxyPassword =
+            proxyProperties.getProperty(SFSessionProperty.PROXY_PASSWORD.getPropertyKey(), "");
+
         if (shouldBypassProxy(accountName, proxyProperties)) {
-          LOGGER.debug("Account {} matches nonProxyHosts pattern from system properties. Bypassing proxy despite proxyProperties configuration.", accountName);
+          LOGGER.debug(
+              "Account {} matches nonProxyHosts pattern from system properties. Bypassing proxy"
+                  + " despite proxyProperties configuration.",
+              accountName);
           return new HttpClientSettingsKey(accountName);
         }
-        
-        LOGGER.trace("Creating HTTP client settings key with proxy configuration from properties for account: {}. Proxy host: {}, port: {}, user: {}, nonProxyHosts: {}",
-                   accountName, proxyHost, proxyPort, isNullOrEmpty(proxyUser) ? "not set" : "set", isNullOrEmpty(nonProxyHosts) ? "not set" : nonProxyHosts);
-        return new HttpClientSettingsKey(accountName, proxyHost, proxyPort, nonProxyHosts, proxyUser, proxyPassword);
+
+        LOGGER.trace(
+            "Creating HTTP client settings key with proxy configuration from properties for"
+                + " account: {}. Proxy host: {}, port: {}, user: {}, nonProxyHosts: {}",
+            accountName,
+            proxyHost,
+            proxyPort,
+            isNullOrEmpty(proxyUser) ? "not set" : "set",
+            isNullOrEmpty(nonProxyHosts) ? "not set" : nonProxyHosts);
+        return new HttpClientSettingsKey(
+            accountName, proxyHost, proxyPort, nonProxyHosts, proxyUser, proxyPassword);
       } else {
-        LOGGER.debug("Creating HTTP client settings key with proxy explicitly disabled via properties for account: {}", accountName);
+        LOGGER.debug(
+            "Creating HTTP client settings key with proxy explicitly disabled via properties for"
+                + " account: {}",
+            accountName);
       }
     }
-    
+
     // Check system properties for proxy configuration (backward compatibility)
-    if ("true".equalsIgnoreCase(System.getProperty(USE_PROXY)) && !shouldBypassProxy(accountName, proxyProperties)) {
+    if ("true".equalsIgnoreCase(System.getProperty(USE_PROXY))
+        && !shouldBypassProxy(accountName, proxyProperties)) {
       String proxyHost = System.getProperty(PROXY_HOST, "");
       String proxyPortStr = System.getProperty(PROXY_PORT, "0");
       int proxyPort = 0;
@@ -185,20 +209,27 @@ public class HttpUtil {
       String nonProxyHosts = System.getProperty(NON_PROXY_HOSTS, "");
       String proxyUser = System.getProperty(HTTP_PROXY_USER, "");
       String proxyPassword = System.getProperty(HTTP_PROXY_PASSWORD, "");
-      
-      LOGGER.trace("Creating HTTP client settings key with proxy configuration from system properties for account: {}. Proxy host: {}, port: {}, user: {}, nonProxyHosts: {}",
-                 accountName, proxyHost, proxyPort, isNullOrEmpty(proxyUser) ? "not set" : "set", isNullOrEmpty(nonProxyHosts) ? "not set" : nonProxyHosts);
-      return new HttpClientSettingsKey(accountName, proxyHost, proxyPort, nonProxyHosts, proxyUser, proxyPassword);
+
+      LOGGER.trace(
+          "Creating HTTP client settings key with proxy configuration from system properties for"
+              + " account: {}. Proxy host: {}, port: {}, user: {}, nonProxyHosts: {}",
+          accountName,
+          proxyHost,
+          proxyPort,
+          isNullOrEmpty(proxyUser) ? "not set" : "set",
+          isNullOrEmpty(nonProxyHosts) ? "not set" : nonProxyHosts);
+      return new HttpClientSettingsKey(
+          accountName, proxyHost, proxyPort, nonProxyHosts, proxyUser, proxyPassword);
     }
-    
+
     // No proxy configuration
-    LOGGER.debug("Creating HTTP client settings key without proxy configuration for account: {}", accountName);
+    LOGGER.debug(
+        "Creating HTTP client settings key without proxy configuration for account: {}",
+        accountName);
     return new HttpClientSettingsKey(accountName);
   }
 
-  /**
-   * Build HttpClient based on the settings key
-   */
+  /** Build HttpClient based on the settings key */
   private static CloseableHttpClient buildHttpClient(HttpClientSettingsKey key) {
     LOGGER.info("Building new HTTP client");
 
@@ -248,8 +279,11 @@ public class HttpUtil {
 
     // proxy settings
     if (key.usesProxy()) {
-      LOGGER.debug("Configuring HTTP client with proxy settings. Host: {}, Port: {}", key.getProxyHost(), key.getProxyPort());
-      
+      LOGGER.debug(
+          "Configuring HTTP client with proxy settings. Host: {}, Port: {}",
+          key.getProxyHost(),
+          key.getProxyPort());
+
       if (isNullOrEmpty(key.getProxyHost())) {
         throw new IllegalArgumentException(
             "proxy host IP is not provided, please assign proxy host IP to http.proxyHost option");
@@ -258,7 +292,7 @@ public class HttpUtil {
         throw new IllegalArgumentException(
             "proxy port number is not provided, please assign proxy port to http.proxyPort option");
       }
-      
+
       String proxyHost = key.getProxyHost();
       int proxyPort = key.getProxyPort();
       HttpHost proxy = new HttpHost(proxyHost, proxyPort, PROXY_SCHEME);
@@ -276,7 +310,8 @@ public class HttpUtil {
         credentialsProvider.setCredentials(authScope, credentials);
         clientBuilder = clientBuilder.setDefaultCredentialsProvider(credentialsProvider);
       } else {
-        LOGGER.debug("HTTP client configured with proxy but no authentication credentials provided");
+        LOGGER.debug(
+            "HTTP client configured with proxy but no authentication credentials provided");
       }
     } else {
       LOGGER.debug("Configuring HTTP client without proxy settings");
@@ -416,7 +451,7 @@ public class HttpUtil {
     Properties proxyProperties = new Properties();
     if (Boolean.parseBoolean(System.getProperty(USE_PROXY))) {
       LOGGER.debug("Generating proxy properties for JDBC from system properties");
-      
+
       if (isNullOrEmpty(System.getProperty(PROXY_PORT))) {
         throw new IllegalArgumentException(
             "proxy port number is not provided, please assign proxy port to http.proxyPort option");
@@ -433,8 +468,10 @@ public class HttpUtil {
       proxyProperties.put(
           SFSessionProperty.PROXY_PORT.getPropertyKey(), System.getProperty(PROXY_PORT));
 
-      LOGGER.debug("Generated proxy properties - Host: {}, Port: {}",
-                 System.getProperty(PROXY_HOST), System.getProperty(PROXY_PORT));
+      LOGGER.debug(
+          "Generated proxy properties - Host: {}, Port: {}",
+          System.getProperty(PROXY_HOST),
+          System.getProperty(PROXY_PORT));
 
       // Check if proxy username and password are set
       final String proxyUser = System.getProperty(HTTP_PROXY_USER);
@@ -454,7 +491,8 @@ public class HttpUtil {
         LOGGER.debug("Added nonProxyHosts to generated properties: {}", nonProxyHosts);
       }
     } else {
-      LOGGER.debug("System property {} is not set to true, generating empty proxy properties", USE_PROXY);
+      LOGGER.debug(
+          "System property {} is not set to true, generating empty proxy properties", USE_PROXY);
     }
     return proxyProperties;
   }
@@ -533,12 +571,11 @@ public class HttpUtil {
     }
   }
 
-  /**
-   * Close all cached HTTP clients and clear the cache
-   */
+  /** Close all cached HTTP clients and clear the cache */
   public static void closeAllHttpClients() {
     // for use in test
-    LOGGER.info("Closing all cached HTTP clients. Total clients in cache: {}", httpClientCache.size());
+    LOGGER.info(
+        "Closing all cached HTTP clients. Total clients in cache: {}", httpClientCache.size());
     for (Map.Entry<HttpClientSettingsKey, CloseableHttpClient> entry : httpClientCache.entrySet()) {
       try {
         LOGGER.debug("Closing HTTP client for key: {}", entry.getKey());
@@ -570,8 +607,8 @@ public class HttpUtil {
 
   /**
    * Changes the account name to the format accountName.snowflakecomputing.com then returns a
-   * boolean to indicate if we should go through a proxy or not.
-   * This is a convenience method for existing tests that calls the two-parameter version with null properties.
+   * boolean to indicate if we should go through a proxy or not. This is a convenience method for
+   * existing tests that calls the two-parameter version with null properties.
    */
   public static Boolean shouldBypassProxy(String accountName) {
     return shouldBypassProxy(accountName, null);
@@ -579,37 +616,45 @@ public class HttpUtil {
 
   /**
    * Changes the account name to the format accountName.snowflakecomputing.com then returns a
-   * boolean to indicate if we should go through a proxy or not.
-   * Checks both system properties and provided proxy properties for non-proxy hosts configuration.
+   * boolean to indicate if we should go through a proxy or not. Checks both system properties and
+   * provided proxy properties for non-proxy hosts configuration.
    */
   public static Boolean shouldBypassProxy(String accountName, Properties proxyProperties) {
     String targetHost = accountName + SNOWFLAKE_DOMAIN_NAME;
-    
+
     // Check system properties first
     String systemNonProxyHosts = System.getProperty(NON_PROXY_HOSTS);
     if (systemNonProxyHosts != null && isInNonProxyHosts(targetHost, systemNonProxyHosts)) {
-      LOGGER.info("Account {} ({}) matches system nonProxyHosts pattern. Bypassing proxy.", accountName, targetHost);
+      LOGGER.info(
+          "Account {} ({}) matches system nonProxyHosts pattern. Bypassing proxy.",
+          accountName,
+          targetHost);
       return true;
     }
-    
+
     // Check SFSessionProperty.NON_PROXY_HOSTS from proxyProperties if available
     if (proxyProperties != null) {
-      String sessionNonProxyHosts = proxyProperties.getProperty(SFSessionProperty.NON_PROXY_HOSTS.getPropertyKey());
+      String sessionNonProxyHosts =
+          proxyProperties.getProperty(SFSessionProperty.NON_PROXY_HOSTS.getPropertyKey());
       if (sessionNonProxyHosts != null && isInNonProxyHosts(targetHost, sessionNonProxyHosts)) {
-        LOGGER.info("Account {} ({}) matches session nonProxyHosts pattern. Bypassing proxy.", accountName, targetHost);
+        LOGGER.info(
+            "Account {} ({}) matches session nonProxyHosts pattern. Bypassing proxy.",
+            accountName,
+            targetHost);
         return true;
       }
     }
-    
-    LOGGER.debug("Account {} ({}) does not match any nonProxyHosts pattern.", accountName, targetHost);
+
+    LOGGER.debug(
+        "Account {} ({}) does not match any nonProxyHosts pattern.", accountName, targetHost);
     return false;
   }
 
   /**
    * The target hostname input is compared with the hosts in the '|' separated list provided by the
-   * nonProxyHosts parameter using regex. The nonProxyHosts will be used as our Patterns, so we
-   * need to replace the '.' and '*' characters since those are special regex constructs that mean
-   * 'any character,' and 'repeat 0 or more times.'
+   * nonProxyHosts parameter using regex. The nonProxyHosts will be used as our Patterns, so we need
+   * to replace the '.' and '*' characters since those are special regex constructs that mean 'any
+   * character,' and 'repeat 0 or more times.'
    */
   private static Boolean isInNonProxyHosts(String targetHost, String nonProxyHosts) {
     String escapedNonProxyHosts = nonProxyHosts.replace(".", "\\.").replace("*", ".*");
