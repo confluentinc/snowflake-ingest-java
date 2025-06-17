@@ -15,6 +15,7 @@ import java.security.PrivateKey;
 import java.security.spec.InvalidKeySpecException;
 import java.util.Collections;
 import java.util.List;
+import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -385,6 +386,27 @@ public class SimpleIngestManager implements AutoCloseable {
         new RequestBuilder(account, user, keyPair, schemeName, hostName, port, userAgentSuffix);
   }
 
+  /* Another flavor of constructor which supports userAgentSuffix and proxyProperties */
+  public SimpleIngestManager(
+      String account,
+      String user,
+      String pipe,
+      PrivateKey privateKey,
+      String schemeName,
+      String hostName,
+      int port,
+      String userAgentSuffix,
+      Properties proxyProperties)
+      throws NoSuchAlgorithmException, InvalidKeySpecException {
+    KeyPair keyPair = Utils.createKeyPairFromPrivateKey(privateKey);
+    // call our initializer method
+    init(account, user, pipe, keyPair, proxyProperties);
+
+    // make the request builder we'll use to build messages to the service
+    builder =
+        new RequestBuilder(account, user, keyPair, schemeName, hostName, port, userAgentSuffix);
+  }
+
   // ========= Constructors End =========
 
   /**
@@ -397,14 +419,43 @@ public class SimpleIngestManager implements AutoCloseable {
    * @param keyPair the KeyPair we'll use to sign JWT tokens
    */
   private void init(String account, String user, String pipe, KeyPair keyPair) {
+    init(account, user, pipe, keyPair, new Properties());
+  }
+
+  /**
+   * init - Does the basic work of constructing a SimpleIngestManager that is common across all
+   * constructors
+   *
+   * @param account The account into which we're loading
+   * @param user the user performing this load
+   * @param pipe the fully qualified name of pipe
+   * @param keyPair the KeyPair we'll use to sign JWT tokens
+   * @param proxyProperties proxy properties for HTTP client configuration
+   */
+  private void init(
+      String account, String user, String pipe, KeyPair keyPair, Properties proxyProperties) {
     // set up our reference variables
     this.account = account;
     this.user = user;
     this.pipe = pipe;
     this.keyPair = keyPair;
 
-    // make our client for sending requests
-    httpClient = HttpUtil.getHttpClient(account);
+    // make our client for sending requests with proxy properties support
+    if (proxyProperties != null && !proxyProperties.isEmpty()) {
+      LOGGER.debug(
+          "Creating HTTP client for SimpleIngestManager with proxy properties for account: {},"
+              + " user: {}",
+          account,
+          user);
+    } else {
+      LOGGER.debug(
+          "Creating HTTP client for SimpleIngestManager without proxy properties for account: {},"
+              + " user: {}",
+          account,
+          user);
+    }
+
+    httpClient = HttpUtil.getHttpClient(account, proxyProperties);
     // make the request builder we'll use to build messages to the service
   }
 
