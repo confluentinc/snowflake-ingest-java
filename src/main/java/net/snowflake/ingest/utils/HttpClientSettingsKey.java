@@ -26,6 +26,7 @@ public class HttpClientSettingsKey implements Serializable {
   private String proxyUser = "";
   private String proxyPassword = "";
   private String accountName = "";
+  private boolean disallowLocalIps;
 
   /** Constructor for proxy configuration */
   public HttpClientSettingsKey(
@@ -34,7 +35,8 @@ public class HttpClientSettingsKey implements Serializable {
       int proxyPort,
       String nonProxyHosts,
       String proxyUser,
-      String proxyPassword) {
+      String proxyPassword,
+      boolean disallowLocalIps) {
     this.useProxy = true;
     this.accountName = !isNullOrEmpty(accountName) ? accountName.trim() : "";
     this.proxyHost = !isNullOrEmpty(proxyHost) ? proxyHost.trim() : "";
@@ -42,25 +44,35 @@ public class HttpClientSettingsKey implements Serializable {
     this.nonProxyHosts = !isNullOrEmpty(nonProxyHosts) ? nonProxyHosts.trim() : "";
     this.proxyUser = !isNullOrEmpty(proxyUser) ? proxyUser.trim() : "";
     this.proxyPassword = !isNullOrEmpty(proxyPassword) ? proxyPassword.trim() : "";
+    this.disallowLocalIps = disallowLocalIps;
 
     LOGGER.trace(
         "Created HttpClientSettingsKey with proxy configuration for account: {}. Host: {}, Port:"
-            + " {}, User: {}, NonProxyHosts: {}",
+            + " {}, User: {}, NonProxyHosts: {}, Disallow Local IPs: {}",
         this.accountName,
         this.proxyHost,
         this.proxyPort,
         !isNullOrEmpty(this.proxyUser) ? "set" : "not set",
-        !isNullOrEmpty(this.nonProxyHosts) ? this.nonProxyHosts : "not set");
+        !isNullOrEmpty(this.nonProxyHosts) ? this.nonProxyHosts : "not set",
+        this.disallowLocalIps);
+  }
+
+  /** Constructor for non-proxy configuration */
+  public HttpClientSettingsKey(String accountName, boolean disallowLocalIps) {
+    this.useProxy = false;
+    this.accountName = !isNullOrEmpty(accountName) ? accountName.trim() : "";
+    this.disallowLocalIps = disallowLocalIps;
+
+    LOGGER.debug(
+        "Created HttpClientSettingsKey without proxy configuration for account: {}, Disallow"
+            + " Local IPs: {}",
+        this.accountName,
+        this.disallowLocalIps);
   }
 
   /** Constructor for non-proxy configuration */
   public HttpClientSettingsKey(String accountName) {
-    this.useProxy = false;
-    this.accountName = !isNullOrEmpty(accountName) ? accountName.trim() : "";
-
-    LOGGER.debug(
-        "Created HttpClientSettingsKey without proxy configuration for account: {}",
-        this.accountName);
+    this(accountName, true);
   }
 
   @Override
@@ -72,6 +84,7 @@ public class HttpClientSettingsKey implements Serializable {
 
     return useProxy == that.useProxy
         && proxyPort == that.proxyPort
+        && disallowLocalIps == that.disallowLocalIps
         && Objects.equals(accountName, that.accountName)
         && Objects.equals(proxyHost, that.proxyHost)
         && Objects.equals(nonProxyHosts, that.nonProxyHosts)
@@ -82,7 +95,18 @@ public class HttpClientSettingsKey implements Serializable {
   @Override
   public int hashCode() {
     return Objects.hash(
-        useProxy, accountName, proxyHost, proxyPort, nonProxyHosts, proxyUser, proxyPassword);
+        useProxy,
+        accountName,
+        proxyHost,
+        proxyPort,
+        nonProxyHosts,
+        proxyUser,
+        proxyPassword,
+        disallowLocalIps);
+  }
+
+  public boolean isDisallowLocalIps() {
+    return disallowLocalIps;
   }
 
   public boolean usesProxy() {
@@ -134,6 +158,8 @@ public class HttpClientSettingsKey implements Serializable {
         + '\''
         + ", proxyPassword="
         + (proxyPassword.isEmpty() ? "not set" : "set")
+        + ", disallowLocalIps="
+        + disallowLocalIps
         + ']';
   }
 }

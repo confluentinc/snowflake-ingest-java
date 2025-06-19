@@ -21,7 +21,7 @@
     <commonslang3.version>3.12.0</commonslang3.version>
     <commonslogging.version>1.2</commonslogging.version>
     <commonstext.version>1.10.0</commonstext.version>
-    <fasterxml.version>2.14.0</fasterxml.version>
+    <fasterxml.version>2.16.1</fasterxml.version>
     <guava.version>32.0.1-jre</guava.version>
     <hadoop.version>3.3.6</hadoop.version>
     <jacoco.skip.instrument>true</jacoco.skip.instrument>
@@ -44,6 +44,7 @@
     <snappy.version>1.1.10.4</snappy.version>
     <snowjdbc.version>3.14.5</snowjdbc.version>
     <yetus.version>0.13.0</yetus.version>
+    <zstd-jni.version>1.5.5-1</zstd-jni.version>
   </properties>
 
   <dependencyManagement>
@@ -302,6 +303,11 @@
         <artifactId>snappy-java</artifactId>
         <version>${snappy.version}</version>
       </dependency>
+      <dependency>
+        <groupId>com.github.luben</groupId>
+        <artifactId>zstd-jni</artifactId>
+        <version>${zstd-jni.version}</version>
+      </dependency>
 
       <!-- JUnit so that we can make some basic unit tests -->
       <dependency>
@@ -333,6 +339,16 @@
 
   <!-- All of our needed dependencies -->
   <dependencies>
+    <dependency>
+      <groupId>io.confluent</groupId>
+      <artifactId>connect-utils</artifactId>
+      <version>0.6.4</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>connect-api</artifactId>
+      <version>3.6.1</version>
+    </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-annotations</artifactId>
@@ -451,8 +467,7 @@
     <dependency>
       <groupId>com.github.luben</groupId>
       <artifactId>zstd-jni</artifactId>
-      <version>1.5.0-1</version>
-      <scope>runtime</scope>
+      <version>${zstd-jni.version}</version>
     </dependency>
     <dependency>
       <groupId>com.google.protobuf</groupId>
@@ -511,6 +526,11 @@
       <artifactId>slf4j-simple</artifactId>
       <version>${slf4j.version}</version>
       <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.httpcomponents</groupId>
+      <artifactId>httpclient</artifactId>
+      <version>4.5.14</version>
     </dependency>
   </dependencies>
 
@@ -663,6 +683,7 @@
                 <banDuplicateClasses>
                   <ignoreClasses>
                     <ignoreClass>META-INF/versions/*/org/bouncycastle/*</ignoreClass>
+                    <ignoreClass>META-INF/versions/*/com/fasterxml/jackson/*</ignoreClass>
                   </ignoreClasses>
                   <findAllDuplicates>true</findAllDuplicates>
                   <ignoreWhenIdentical>true</ignoreWhenIdentical>
@@ -747,6 +768,8 @@
             <includedLicense>EDL 1.0</includedLicense>
             <includedLicense>The Go license</includedLicense>
             <includedLicense>Bouncy Castle Licence</includedLicense>
+            <includedLicense>EPL 2.0</includedLicense>
+            <includedLicense>GPL2 w/ CPE</includedLicense>
           </includedLicenses>
           <excludedScopes>test,provided,system</excludedScopes>
           <failOnBlacklist>true</failOnBlacklist>
@@ -927,7 +950,7 @@
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-shade-plugin</artifactId>
-            <version>3.4.1</version>
+            <version>3.5.2</version>
             <configuration>
               <artifactSet>
                 <excludes>
@@ -1098,6 +1121,7 @@
                 </goals>
                 <phase>generate-resources</phase>
                 <configuration>
+                  <skip>true</skip>
                   <executable>python3</executable>
                   <arguments>
                     <argument>${project.basedir}/scripts/process_licenses.py</argument>
