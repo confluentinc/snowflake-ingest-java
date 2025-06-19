@@ -10,6 +10,7 @@ import java.security.Security;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -31,7 +32,9 @@ import net.snowflake.client.jdbc.internal.apache.http.client.HttpRequestRetryHan
 import net.snowflake.client.jdbc.internal.apache.http.client.ServiceUnavailableRetryStrategy;
 import net.snowflake.client.jdbc.internal.apache.http.client.config.RequestConfig;
 import net.snowflake.client.jdbc.internal.apache.http.client.protocol.HttpClientContext;
+import net.snowflake.client.jdbc.internal.apache.http.config.Registry;
 import net.snowflake.client.jdbc.internal.apache.http.conn.routing.HttpRoute;
+import net.snowflake.client.jdbc.internal.apache.http.conn.socket.ConnectionSocketFactory;
 import net.snowflake.client.jdbc.internal.apache.http.conn.ssl.DefaultHostnameVerifier;
 import net.snowflake.client.jdbc.internal.apache.http.conn.ssl.SSLConnectionSocketFactory;
 import net.snowflake.client.jdbc.internal.apache.http.impl.client.BasicCredentialsProvider;
@@ -45,6 +48,8 @@ import net.snowflake.client.jdbc.internal.apache.http.ssl.SSLContexts;
 import net.snowflake.ingest.streaming.internal.StreamingIngestUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import io.confluent.connect.utils.network.FilteringDnsResolver;
+import net.snowflake.client.jdbc.internal.apache.http.conn.DnsResolver;
 
 /** Created by hyu on 8/10/17. */
 public class HttpUtil {
@@ -262,7 +267,8 @@ public class HttpUtil {
 
     // Below pooling client connection manager uses time_to_live value as -1 which means it will not
     // refresh a persisted connection
-    connectionManager = new PoolingHttpClientConnectionManager();
+    FilteringDnsResolver dnsResolver = new FilteringDnsResolver(true, true, true, Collections.emptyList(), Collections.emptyList());
+    connectionManager = new PoolingHttpClientConnectionManager(null, (DnsResolver) dnsResolver);
     connectionManager.setDefaultMaxPerRoute(DEFAULT_MAX_CONNECTIONS_PER_ROUTE);
     connectionManager.setMaxTotal(DEFAULT_MAX_CONNECTIONS);
 

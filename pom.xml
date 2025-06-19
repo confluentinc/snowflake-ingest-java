@@ -334,6 +334,11 @@
   <!-- All of our needed dependencies -->
   <dependencies>
     <dependency>
+      <groupId>io.confluent</groupId>
+      <artifactId>connect-utils</artifactId>
+      <version>0.6.4</version>
+    </dependency>
+    <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-annotations</artifactId>
     </dependency>
