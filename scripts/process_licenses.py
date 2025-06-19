@@ -61,6 +61,9 @@ ADDITIONAL_LICENSES_MAP = {
     "org.bouncycastle:bcpkix-jdk18on": BOUNCY_CASTLE_LICENSE,
     "org.bouncycastle:bcutil-jdk18on": BOUNCY_CASTLE_LICENSE,
     "org.bouncycastle:bcprov-jdk18on": BOUNCY_CASTLE_LICENSE,
+    "org.apache.kafka:connect-api": APACHE_LICENSE,
+    "org.apache.kafka:kafka-clients": APACHE_LICENSE,
+    "org.lz4:lz4-java": APACHE_LICENSE,
 }
 
 

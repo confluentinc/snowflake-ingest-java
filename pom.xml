@@ -467,8 +467,7 @@
     <dependency>
       <groupId>com.github.luben</groupId>
       <artifactId>zstd-jni</artifactId>
-      <version>1.5.0-1</version>
-      <scope>runtime</scope>
+      <version>${zstd-jni.version}</version>
     </dependency>
     <dependency>
       <groupId>com.google.protobuf</groupId>
@@ -769,6 +768,8 @@
             <includedLicense>EDL 1.0</includedLicense>
             <includedLicense>The Go license</includedLicense>
             <includedLicense>Bouncy Castle Licence</includedLicense>
+            <includedLicense>EPL 2.0</includedLicense>
+            <includedLicense>GPL2 w/ CPE</includedLicense>
           </includedLicenses>
           <excludedScopes>test,provided,system</excludedScopes>
           <failOnBlacklist>true</failOnBlacklist>
@@ -1120,6 +1121,7 @@
                 </goals>
                 <phase>generate-resources</phase>
                 <configuration>
+                  <skip>true</skip>
                   <executable>python3</executable>
                   <arguments>
                     <argument>${project.basedir}/scripts/process_licenses.py</argument>
