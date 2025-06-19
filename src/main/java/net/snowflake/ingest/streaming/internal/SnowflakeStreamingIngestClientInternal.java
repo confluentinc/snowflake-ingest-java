@@ -1132,7 +1132,8 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
             || key.equals(SFSessionProperty.PROXY_PORT.getPropertyKey())
             || key.equals(SFSessionProperty.NON_PROXY_HOSTS.getPropertyKey())
             || key.equals(SFSessionProperty.PROXY_USER.getPropertyKey())
-            || key.equals(SFSessionProperty.PROXY_PASSWORD.getPropertyKey())) {
+            || key.equals(SFSessionProperty.PROXY_PASSWORD.getPropertyKey())
+            || key.equals("connection.disallow.local.ips")) {
           proxyProperties.put(key, this.originalProperties.getProperty(key));
         }
       }
