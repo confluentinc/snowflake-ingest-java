@@ -665,6 +665,11 @@
             <configuration>
               <failOnWarning>true</failOnWarning>
               <ignoreNonCompile>true</ignoreNonCompile>
+              <ignoredUnusedDeclaredDependencies>
+                <dependency>org.apache.httpcomponents:httpclient</dependency>
+                <dependency>org.apache.kafka:connect-api</dependency>
+                <dependency>com.github.luben:zstd-jni</dependency>
+              </ignoredUnusedDeclaredDependencies>
             </configuration>
           </execution>
         </executions>
