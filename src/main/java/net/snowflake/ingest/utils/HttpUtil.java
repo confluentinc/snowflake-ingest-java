@@ -149,6 +149,13 @@ public class HttpUtil {
   private static HttpClientSettingsKey createHttpClientSettingsKey(
       String accountName, Properties proxyProperties) {
 
+    boolean disallowLocalIps = true;
+    if (proxyProperties != null
+        && proxyProperties.containsKey("connection.disallow.local.ips")) {
+      disallowLocalIps =
+          Boolean.parseBoolean(proxyProperties.getProperty("connection.disallow.local.ips"));
+    }
+
     if (proxyProperties != null
         && proxyProperties.containsKey(SFSessionProperty.USE_PROXY.getPropertyKey())) {
 
@@ -180,7 +187,7 @@ public class HttpUtil {
               "Account {} matches nonProxyHosts pattern from system properties. Bypassing proxy"
                   + " despite proxyProperties configuration.",
               accountName);
-          return new HttpClientSettingsKey(accountName);
+          return new HttpClientSettingsKey(accountName, disallowLocalIps);
         }
 
         LOGGER.trace(
@@ -192,7 +199,13 @@ public class HttpUtil {
             isNullOrEmpty(proxyUser) ? "not set" : "set",
             isNullOrEmpty(nonProxyHosts) ? "not set" : nonProxyHosts);
         return new HttpClientSettingsKey(
-            accountName, proxyHost, proxyPort, nonProxyHosts, proxyUser, proxyPassword);
+            accountName,
+            proxyHost,
+            proxyPort,
+            nonProxyHosts,
+            proxyUser,
+            proxyPassword,
+            disallowLocalIps);
       } else {
         LOGGER.debug(
             "Creating HTTP client settings key with proxy explicitly disabled via properties for"
@@ -226,14 +239,20 @@ public class HttpUtil {
           isNullOrEmpty(proxyUser) ? "not set" : "set",
           isNullOrEmpty(nonProxyHosts) ? "not set" : nonProxyHosts);
       return new HttpClientSettingsKey(
-          accountName, proxyHost, proxyPort, nonProxyHosts, proxyUser, proxyPassword);
+          accountName,
+          proxyHost,
+          proxyPort,
+          nonProxyHosts,
+          proxyUser,
+          proxyPassword,
+          disallowLocalIps);
     }
 
     // No proxy configuration
     LOGGER.debug(
         "Creating HTTP client settings key without proxy configuration for account: {}",
         accountName);
-    return new HttpClientSettingsKey(accountName);
+    return new HttpClientSettingsKey(accountName, disallowLocalIps);
   }
 
   /** Build HttpClient based on the settings key */
@@ -273,7 +292,7 @@ public class HttpUtil {
     // connection manager.
     FilteringDnsResolver filteringDnsResolver =
         new FilteringDnsResolver(
-            true,
+            key.isDisallowLocalIps(),
             true,
             true,
             Collections.emptyList(),
