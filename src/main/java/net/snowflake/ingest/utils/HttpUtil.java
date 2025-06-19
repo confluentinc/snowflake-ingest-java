@@ -32,9 +32,7 @@ import net.snowflake.client.jdbc.internal.apache.http.client.HttpRequestRetryHan
 import net.snowflake.client.jdbc.internal.apache.http.client.ServiceUnavailableRetryStrategy;
 import net.snowflake.client.jdbc.internal.apache.http.client.config.RequestConfig;
 import net.snowflake.client.jdbc.internal.apache.http.client.protocol.HttpClientContext;
-import net.snowflake.client.jdbc.internal.apache.http.config.Registry;
 import net.snowflake.client.jdbc.internal.apache.http.conn.routing.HttpRoute;
-import net.snowflake.client.jdbc.internal.apache.http.conn.socket.ConnectionSocketFactory;
 import net.snowflake.client.jdbc.internal.apache.http.conn.ssl.DefaultHostnameVerifier;
 import net.snowflake.client.jdbc.internal.apache.http.conn.ssl.SSLConnectionSocketFactory;
 import net.snowflake.client.jdbc.internal.apache.http.impl.client.BasicCredentialsProvider;
@@ -266,9 +264,20 @@ public class HttpUtil {
             .build();
 
     // Below pooling client connection manager uses time_to_live value as -1 which means it will not
-    // refresh a persisted connection
-    FilteringDnsResolver dnsResolver = new FilteringDnsResolver(true, true, true, Collections.emptyList(), Collections.emptyList());
-    connectionManager = new PoolingHttpClientConnectionManager(null, (DnsResolver) dnsResolver);
+    // refresh a persisted connection. We create the filtering resolver first, then wrap it in our
+    // adapter so that it implements the Snowflake-shaded DnsResolver interface expected by the
+    // connection manager.
+    FilteringDnsResolver filteringDnsResolver =
+        new FilteringDnsResolver(
+            true,
+            true,
+            true,
+            Collections.emptyList(),
+            Collections.emptyList());
+
+    DnsResolver dnsResolverAdapter = new FilteringDnsResolverAdapter(filteringDnsResolver);
+
+    connectionManager = new PoolingHttpClientConnectionManager(null, dnsResolverAdapter);
     connectionManager.setDefaultMaxPerRoute(DEFAULT_MAX_CONNECTIONS_PER_ROUTE);
     connectionManager.setMaxTotal(DEFAULT_MAX_CONNECTIONS);
 
@@ -671,5 +680,27 @@ public class HttpUtil {
       }
     }
     return false;
+  }
+
+  /**
+   * Adapter bridging the connect-utils FilteringDnsResolver (that implements the standard Apache
+   * HttpClient org.apache.http.conn.DnsResolver interface) with the Snowflake JDBC driver's
+   * repackaged DnsResolver interface.
+   */
+  private static class FilteringDnsResolverAdapter
+      implements net.snowflake.client.jdbc.internal.apache.http.conn.DnsResolver {
+
+    private final io.confluent.connect.utils.network.FilteringDnsResolver delegate;
+
+    FilteringDnsResolverAdapter(
+        io.confluent.connect.utils.network.FilteringDnsResolver delegate) {
+      this.delegate = delegate;
+    }
+
+    @Override
+    public java.net.InetAddress[] resolve(String host)
+        throws java.net.UnknownHostException {
+      return delegate.resolve(host);
+    }
   }
 }

@@ -21,7 +21,7 @@
     <commonslang3.version>3.12.0</commonslang3.version>
     <commonslogging.version>1.2</commonslogging.version>
     <commonstext.version>1.10.0</commonstext.version>
-    <fasterxml.version>2.14.0</fasterxml.version>
+    <fasterxml.version>2.16.1</fasterxml.version>
     <guava.version>32.0.1-jre</guava.version>
     <hadoop.version>3.3.6</hadoop.version>
     <jacoco.skip.instrument>true</jacoco.skip.instrument>
@@ -517,6 +517,11 @@
       <version>${slf4j.version}</version>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>org.apache.httpcomponents</groupId>
+      <artifactId>httpclient</artifactId>
+      <version>4.5.14</version>
+    </dependency>
   </dependencies>
 
   <build>
@@ -668,6 +673,7 @@
                 <banDuplicateClasses>
                   <ignoreClasses>
                     <ignoreClass>META-INF/versions/*/org/bouncycastle/*</ignoreClass>
+                    <ignoreClass>META-INF/versions/*/com/fasterxml/jackson/*</ignoreClass>
                   </ignoreClasses>
                   <findAllDuplicates>true</findAllDuplicates>
                   <ignoreWhenIdentical>true</ignoreWhenIdentical>
@@ -932,7 +938,7 @@
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-shade-plugin</artifactId>
-            <version>3.4.1</version>
+            <version>3.5.2</version>
             <configuration>
               <artifactSet>
                 <excludes>
