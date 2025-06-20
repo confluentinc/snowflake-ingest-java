@@ -6,11 +6,14 @@ package net.snowflake.ingest.utils;
 
 import static net.snowflake.ingest.utils.Utils.isNullOrEmpty;
 
+import io.confluent.connect.utils.network.FilteringDnsResolver;
 import java.security.Security;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -32,7 +35,12 @@ import net.snowflake.client.jdbc.internal.apache.http.client.HttpRequestRetryHan
 import net.snowflake.client.jdbc.internal.apache.http.client.ServiceUnavailableRetryStrategy;
 import net.snowflake.client.jdbc.internal.apache.http.client.config.RequestConfig;
 import net.snowflake.client.jdbc.internal.apache.http.client.protocol.HttpClientContext;
+import net.snowflake.client.jdbc.internal.apache.http.config.Registry;
+import net.snowflake.client.jdbc.internal.apache.http.config.RegistryBuilder;
+import net.snowflake.client.jdbc.internal.apache.http.conn.DnsResolver;
 import net.snowflake.client.jdbc.internal.apache.http.conn.routing.HttpRoute;
+import net.snowflake.client.jdbc.internal.apache.http.conn.socket.ConnectionSocketFactory;
+import net.snowflake.client.jdbc.internal.apache.http.conn.socket.PlainConnectionSocketFactory;
 import net.snowflake.client.jdbc.internal.apache.http.conn.ssl.DefaultHostnameVerifier;
 import net.snowflake.client.jdbc.internal.apache.http.conn.ssl.SSLConnectionSocketFactory;
 import net.snowflake.client.jdbc.internal.apache.http.impl.client.BasicCredentialsProvider;
@@ -46,12 +54,6 @@ import net.snowflake.client.jdbc.internal.apache.http.ssl.SSLContexts;
 import net.snowflake.ingest.streaming.internal.StreamingIngestUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import io.confluent.connect.utils.network.FilteringDnsResolver;
-import net.snowflake.client.jdbc.internal.apache.http.conn.DnsResolver;
-import net.snowflake.client.jdbc.internal.apache.http.config.Registry;
-import net.snowflake.client.jdbc.internal.apache.http.config.RegistryBuilder;
-import net.snowflake.client.jdbc.internal.apache.http.conn.socket.ConnectionSocketFactory;
-import net.snowflake.client.jdbc.internal.apache.http.conn.socket.PlainConnectionSocketFactory;
 
 /** Created by hyu on 8/10/17. */
 public class HttpUtil {
@@ -150,10 +152,37 @@ public class HttpUtil {
       String accountName, Properties proxyProperties) {
 
     boolean disallowLocalIps = true;
-    if (proxyProperties != null
-        && proxyProperties.containsKey("connection.disallow.local.ips")) {
+    if (proxyProperties != null && proxyProperties.containsKey("connection.disallow.local.ips")) {
       disallowLocalIps =
           Boolean.parseBoolean(proxyProperties.getProperty("connection.disallow.local.ips"));
+    }
+
+    boolean disallowPrivateIps = true;
+    if (proxyProperties != null && proxyProperties.containsKey("connection.disallow.private.ips")) {
+      disallowPrivateIps =
+          Boolean.parseBoolean(proxyProperties.getProperty("connection.disallow.private.ips"));
+    }
+
+    boolean disallowClassEIps = true;
+    if (proxyProperties != null && proxyProperties.containsKey("connection.disallow.class.e.ips")) {
+      disallowClassEIps =
+          Boolean.parseBoolean(proxyProperties.getProperty("connection.disallow.class.e.ips"));
+    }
+
+    List<String> disallowCidrRanges = Collections.emptyList();
+    if (proxyProperties != null && proxyProperties.containsKey("connection.disallow.cidr.ranges")) {
+      String disallowCidrRangesStr = proxyProperties.getProperty("connection.disallow.cidr.ranges");
+      if (!isNullOrEmpty(disallowCidrRangesStr)) {
+        disallowCidrRanges = Arrays.asList(disallowCidrRangesStr.split(","));
+      }
+    }
+
+    List<String> allowCidrRanges = Collections.emptyList();
+    if (proxyProperties != null && proxyProperties.containsKey("connection.allow.cidr.ranges")) {
+      String allowCidrRangesStr = proxyProperties.getProperty("connection.allow.cidr.ranges");
+      if (!isNullOrEmpty(allowCidrRangesStr)) {
+        allowCidrRanges = Arrays.asList(allowCidrRangesStr.split(","));
+      }
     }
 
     if (proxyProperties != null
@@ -187,7 +216,13 @@ public class HttpUtil {
               "Account {} matches nonProxyHosts pattern from system properties. Bypassing proxy"
                   + " despite proxyProperties configuration.",
               accountName);
-          return new HttpClientSettingsKey(accountName, disallowLocalIps);
+          return new HttpClientSettingsKey(
+              accountName,
+              disallowLocalIps,
+              disallowPrivateIps,
+              disallowClassEIps,
+              disallowCidrRanges,
+              allowCidrRanges);
         }
 
         LOGGER.trace(
@@ -205,7 +240,11 @@ public class HttpUtil {
             nonProxyHosts,
             proxyUser,
             proxyPassword,
-            disallowLocalIps);
+            disallowLocalIps,
+            disallowPrivateIps,
+            disallowClassEIps,
+            disallowCidrRanges,
+            allowCidrRanges);
       } else {
         LOGGER.debug(
             "Creating HTTP client settings key with proxy explicitly disabled via properties for"
@@ -245,14 +284,18 @@ public class HttpUtil {
           nonProxyHosts,
           proxyUser,
           proxyPassword,
-          disallowLocalIps);
+          disallowLocalIps,
+          disallowPrivateIps,
+          disallowClassEIps,
+          disallowCidrRanges,
+          allowCidrRanges);
     }
 
     // No proxy configuration
     LOGGER.debug(
         "Creating HTTP client settings key without proxy configuration for account: {}",
         accountName);
-    return new HttpClientSettingsKey(accountName, disallowLocalIps);
+    return new HttpClientSettingsKey(accountName);
   }
 
   /** Build HttpClient based on the settings key */
@@ -293,10 +336,10 @@ public class HttpUtil {
     FilteringDnsResolver filteringDnsResolver =
         new FilteringDnsResolver(
             key.isDisallowLocalIps(),
-            true,
-            true,
-            Collections.emptyList(),
-            Collections.emptyList());
+            key.isDisallowPrivateIps(),
+            key.isDisallowClassEIps(),
+            key.getDisallowCidrRanges(),
+            key.getAllowCidrRanges());
 
     DnsResolver dnsResolverAdapter = new FilteringDnsResolverAdapter(filteringDnsResolver);
 
@@ -723,14 +766,12 @@ public class HttpUtil {
 
     private final io.confluent.connect.utils.network.FilteringDnsResolver delegate;
 
-    FilteringDnsResolverAdapter(
-        io.confluent.connect.utils.network.FilteringDnsResolver delegate) {
+    FilteringDnsResolverAdapter(io.confluent.connect.utils.network.FilteringDnsResolver delegate) {
       this.delegate = delegate;
     }
 
     @Override
-    public java.net.InetAddress[] resolve(String host)
-        throws java.net.UnknownHostException {
+    public java.net.InetAddress[] resolve(String host) throws java.net.UnknownHostException {
       return delegate.resolve(host);
     }
   }
