@@ -6,10 +6,14 @@ package net.snowflake.ingest.utils;
 
 import static net.snowflake.ingest.utils.Utils.isNullOrEmpty;
 
+import io.confluent.connect.utils.network.FilteringDnsResolver;
 import java.security.Security;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -31,7 +35,12 @@ import net.snowflake.client.jdbc.internal.apache.http.client.HttpRequestRetryHan
 import net.snowflake.client.jdbc.internal.apache.http.client.ServiceUnavailableRetryStrategy;
 import net.snowflake.client.jdbc.internal.apache.http.client.config.RequestConfig;
 import net.snowflake.client.jdbc.internal.apache.http.client.protocol.HttpClientContext;
+import net.snowflake.client.jdbc.internal.apache.http.config.Registry;
+import net.snowflake.client.jdbc.internal.apache.http.config.RegistryBuilder;
+import net.snowflake.client.jdbc.internal.apache.http.conn.DnsResolver;
 import net.snowflake.client.jdbc.internal.apache.http.conn.routing.HttpRoute;
+import net.snowflake.client.jdbc.internal.apache.http.conn.socket.ConnectionSocketFactory;
+import net.snowflake.client.jdbc.internal.apache.http.conn.socket.PlainConnectionSocketFactory;
 import net.snowflake.client.jdbc.internal.apache.http.conn.ssl.DefaultHostnameVerifier;
 import net.snowflake.client.jdbc.internal.apache.http.conn.ssl.SSLConnectionSocketFactory;
 import net.snowflake.client.jdbc.internal.apache.http.impl.client.BasicCredentialsProvider;
@@ -142,6 +151,40 @@ public class HttpUtil {
   private static HttpClientSettingsKey createHttpClientSettingsKey(
       String accountName, Properties proxyProperties) {
 
+    boolean disallowLocalIps = true;
+    if (proxyProperties != null && proxyProperties.containsKey(Utils.CONNECTION_DISALLOW_LOCAL_IPS)) {
+      disallowLocalIps =
+          Boolean.parseBoolean(proxyProperties.getProperty(Utils.CONNECTION_DISALLOW_LOCAL_IPS));
+    }
+
+    boolean disallowPrivateIps = true;
+    if (proxyProperties != null && proxyProperties.containsKey(Utils.CONNECTION_DISALLOW_PRIVATE_IPS)) {
+      disallowPrivateIps =
+          Boolean.parseBoolean(proxyProperties.getProperty(Utils.CONNECTION_DISALLOW_PRIVATE_IPS));
+    }
+
+    boolean disallowClassEIps = true;
+    if (proxyProperties != null && proxyProperties.containsKey(Utils.CONNECTION_DISALLOW_CLASS_E_IPS)) {
+      disallowClassEIps =
+          Boolean.parseBoolean(proxyProperties.getProperty(Utils.CONNECTION_DISALLOW_CLASS_E_IPS));
+    }
+
+    List<String> disallowCidrRanges = Collections.emptyList();
+    if (proxyProperties != null && proxyProperties.containsKey(Utils.CONNECTION_DISALLOW_CIDR_RANGES)) {
+      String disallowCidrRangesStr = proxyProperties.getProperty(Utils.CONNECTION_DISALLOW_CIDR_RANGES);
+      if (!isNullOrEmpty(disallowCidrRangesStr)) {
+        disallowCidrRanges = Arrays.asList(disallowCidrRangesStr.split(","));
+      }
+    }
+
+    List<String> allowCidrRanges = Collections.emptyList();
+    if (proxyProperties != null && proxyProperties.containsKey(Utils.CONNECTION_ALLOW_CIDR_RANGES)) {
+      String allowCidrRangesStr = proxyProperties.getProperty(Utils.CONNECTION_ALLOW_CIDR_RANGES);
+      if (!isNullOrEmpty(allowCidrRangesStr)) {
+        allowCidrRanges = Arrays.asList(allowCidrRangesStr.split(","));
+      }
+    }
+
     if (proxyProperties != null
         && proxyProperties.containsKey(SFSessionProperty.USE_PROXY.getPropertyKey())) {
 
@@ -173,7 +216,13 @@ public class HttpUtil {
               "Account {} matches nonProxyHosts pattern from system properties. Bypassing proxy"
                   + " despite proxyProperties configuration.",
               accountName);
-          return new HttpClientSettingsKey(accountName);
+          return new HttpClientSettingsKey(
+              accountName,
+              disallowLocalIps,
+              disallowPrivateIps,
+              disallowClassEIps,
+              disallowCidrRanges,
+              allowCidrRanges);
         }
 
         LOGGER.trace(
@@ -185,7 +234,17 @@ public class HttpUtil {
             isNullOrEmpty(proxyUser) ? "not set" : "set",
             isNullOrEmpty(nonProxyHosts) ? "not set" : nonProxyHosts);
         return new HttpClientSettingsKey(
-            accountName, proxyHost, proxyPort, nonProxyHosts, proxyUser, proxyPassword);
+            accountName,
+            proxyHost,
+            proxyPort,
+            nonProxyHosts,
+            proxyUser,
+            proxyPassword,
+            disallowLocalIps,
+            disallowPrivateIps,
+            disallowClassEIps,
+            disallowCidrRanges,
+            allowCidrRanges);
       } else {
         LOGGER.debug(
             "Creating HTTP client settings key with proxy explicitly disabled via properties for"
@@ -219,7 +278,17 @@ public class HttpUtil {
           isNullOrEmpty(proxyUser) ? "not set" : "set",
           isNullOrEmpty(nonProxyHosts) ? "not set" : nonProxyHosts);
       return new HttpClientSettingsKey(
-          accountName, proxyHost, proxyPort, nonProxyHosts, proxyUser, proxyPassword);
+          accountName,
+          proxyHost,
+          proxyPort,
+          nonProxyHosts,
+          proxyUser,
+          proxyPassword,
+          disallowLocalIps,
+          disallowPrivateIps,
+          disallowClassEIps,
+          disallowCidrRanges,
+          allowCidrRanges);
     }
 
     // No proxy configuration
@@ -261,8 +330,28 @@ public class HttpUtil {
             .build();
 
     // Below pooling client connection manager uses time_to_live value as -1 which means it will not
-    // refresh a persisted connection
-    connectionManager = new PoolingHttpClientConnectionManager();
+    // refresh a persisted connection. We create the filtering resolver first, then wrap it in our
+    // adapter so that it implements the Snowflake-shaded DnsResolver interface expected by the
+    // connection manager.
+    FilteringDnsResolver filteringDnsResolver =
+        new FilteringDnsResolver(
+            key.isDisallowLocalIps(),
+            key.isDisallowPrivateIps(),
+            key.isDisallowClassEIps(),
+            key.getDisallowCidrRanges(),
+            key.getAllowCidrRanges());
+
+    DnsResolver dnsResolverAdapter = new FilteringDnsResolverAdapter(filteringDnsResolver);
+
+    // Create registry with our SSL socket factory
+    Registry<ConnectionSocketFactory> socketFactoryRegistry =
+        RegistryBuilder.<ConnectionSocketFactory>create()
+            .register("https", f)
+            .register("http", PlainConnectionSocketFactory.getSocketFactory())
+            .build();
+
+    connectionManager =
+        new PoolingHttpClientConnectionManager(socketFactoryRegistry, dnsResolverAdapter);
     connectionManager.setDefaultMaxPerRoute(DEFAULT_MAX_CONNECTIONS_PER_ROUTE);
     connectionManager.setMaxTotal(DEFAULT_MAX_CONNECTIONS);
 
@@ -665,5 +754,25 @@ public class HttpUtil {
       }
     }
     return false;
+  }
+
+  /**
+   * Adapter bridging the connect-utils FilteringDnsResolver (that implements the standard Apache
+   * HttpClient org.apache.http.conn.DnsResolver interface) with the Snowflake JDBC driver's
+   * repackaged DnsResolver interface.
+   */
+  private static class FilteringDnsResolverAdapter
+      implements net.snowflake.client.jdbc.internal.apache.http.conn.DnsResolver {
+
+    private final io.confluent.connect.utils.network.FilteringDnsResolver delegate;
+
+    FilteringDnsResolverAdapter(io.confluent.connect.utils.network.FilteringDnsResolver delegate) {
+      this.delegate = delegate;
+    }
+
+    @Override
+    public java.net.InetAddress[] resolve(String host) throws java.net.UnknownHostException {
+      return delegate.resolve(host);
+    }
   }
 }
