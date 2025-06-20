@@ -12,6 +12,7 @@ semaphore:
     - /^\d+\.\d+\.x$/
     - /v\d+\.\d+\.\d+\-hotfix\-x/
     - /^gh-readonly-queue.*/
+    - /.*-test-release$/
 git:
   enable: true
 github:
