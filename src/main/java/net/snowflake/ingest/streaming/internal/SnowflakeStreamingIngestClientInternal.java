@@ -1143,17 +1143,8 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
       }
 
       if (!proxyProperties.isEmpty()) {
-        logger.logTrace(
-            "Proxy properties extracted: {}",
-            proxyProperties.keySet().stream()
-                .map(
-                    k ->
-                        k
-                            + "="
-                            + (k.toString().toLowerCase().contains("password")
-                                ? "[HIDDEN]"
-                                : proxyProperties.get(k)))
-                .collect(Collectors.joining(", ")));
+        logger.logDebug(
+            "Proxy properties extracted");
       } else {
         logger.logDebug(
             "No proxy properties found in original properties for client: {}", this.name);
