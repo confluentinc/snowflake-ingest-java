@@ -1133,11 +1133,11 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
             || key.equals(SFSessionProperty.NON_PROXY_HOSTS.getPropertyKey())
             || key.equals(SFSessionProperty.PROXY_USER.getPropertyKey())
             || key.equals(SFSessionProperty.PROXY_PASSWORD.getPropertyKey())
-            || key.equals("connection.disallow.local.ips")
-            || key.equals("connection.disallow.private.ips")
-            || key.equals("connection.disallow.class.e.ips")
-            || key.equals("connection.disallow.cidr.ranges")
-            || key.equals("connection.allow.cidr.ranges")) {
+            || key.equals(Utils.CONNECTION_DISALLOW_LOCAL_IPS)
+            || key.equals(Utils.CONNECTION_DISALLOW_PRIVATE_IPS)
+            || key.equals(Utils.CONNECTION_DISALLOW_CLASS_E_IPS)
+            || key.equals(Utils.CONNECTION_DISALLOW_CIDR_RANGES)
+            || key.equals(Utils.CONNECTION_ALLOW_CIDR_RANGES)) {
           proxyProperties.put(key, this.originalProperties.getProperty(key));
         }
       }
