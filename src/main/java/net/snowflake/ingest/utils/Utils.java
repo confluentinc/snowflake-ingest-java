@@ -49,6 +49,13 @@ public class Utils {
   /** provider name for FIPS */
   private static final String BOUNCY_CASTLE_FIPS_PROVIDER = "BCFIPS";
 
+  // Connection configuration constants
+  public static final String CONNECTION_DISALLOW_LOCAL_IPS = "connection.disallow.local.ips";
+  public static final String CONNECTION_DISALLOW_PRIVATE_IPS = "connection.disallow.private.ips";
+  public static final String CONNECTION_DISALLOW_CLASS_E_IPS = "connection.disallow.class.e.ips";
+  public static final String CONNECTION_DISALLOW_CIDR_RANGES = "connection.disallow.cidr.ranges";
+  public static final String CONNECTION_ALLOW_CIDR_RANGES = "connection.allow.cidr.ranges";
+
   static {
     // Add Bouncy Castle to the security provider. This is required to
     // verify the signature on OCSP response and attached certificates.
@@ -229,7 +236,11 @@ public class Utils {
         || key.equals(SFSessionProperty.PROXY_PASSWORD.getPropertyKey())
         || key.equals(SFSessionProperty.NON_PROXY_HOSTS.getPropertyKey())
         || key.equals(SFSessionProperty.PROXY_PROTOCOL.getPropertyKey())
-        || key.equals("connection.disallow.local.ips");
+        || key.equals(CONNECTION_DISALLOW_LOCAL_IPS)
+        || key.equals(CONNECTION_DISALLOW_PRIVATE_IPS)
+        || key.equals(CONNECTION_DISALLOW_CLASS_E_IPS)
+        || key.equals(CONNECTION_DISALLOW_CIDR_RANGES)
+        || key.equals(CONNECTION_ALLOW_CIDR_RANGES);
   }
 
   /** Construct account url from input schema, host and port */
