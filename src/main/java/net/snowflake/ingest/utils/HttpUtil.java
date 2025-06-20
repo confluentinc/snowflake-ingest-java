@@ -329,32 +329,6 @@ public class HttpUtil {
                         DEFAULT_HTTP_CLIENT_SOCKET_TIMEOUT_MINUTES, TimeUnit.MINUTES))
             .build();
 
-    // Below pooling client connection manager uses time_to_live value as -1 which means it will not
-    // refresh a persisted connection. We create the filtering resolver first, then wrap it in our
-    // adapter so that it implements the Snowflake-shaded DnsResolver interface expected by the
-    // connection manager.
-    FilteringDnsResolver filteringDnsResolver =
-        new FilteringDnsResolver(
-            key.isDisallowLocalIps(),
-            key.isDisallowPrivateIps(),
-            key.isDisallowClassEIps(),
-            key.getDisallowCidrRanges(),
-            key.getAllowCidrRanges());
-
-    DnsResolver dnsResolverAdapter = new FilteringDnsResolverAdapter(filteringDnsResolver);
-
-    // Create registry with our SSL socket factory
-    Registry<ConnectionSocketFactory> socketFactoryRegistry =
-        RegistryBuilder.<ConnectionSocketFactory>create()
-            .register("https", f)
-            .register("http", PlainConnectionSocketFactory.getSocketFactory())
-            .build();
-
-    connectionManager =
-        new PoolingHttpClientConnectionManager(socketFactoryRegistry, dnsResolverAdapter);
-    connectionManager.setDefaultMaxPerRoute(DEFAULT_MAX_CONNECTIONS_PER_ROUTE);
-    connectionManager.setMaxTotal(DEFAULT_MAX_CONNECTIONS);
-
     // Use an anonymous class to implement the interface ServiceUnavailableRetryStrategy() The max
     // retry time is 3. The interval time is backoff.
     HttpClientBuilder clientBuilder =
@@ -365,6 +339,13 @@ public class HttpUtil {
             .setServiceUnavailableRetryStrategy(getServiceUnavailableRetryStrategy())
             .setRetryHandler(getHttpRequestRetryHandler())
             .setDefaultRequestConfig(requestConfig);
+
+    // Create registry with our SSL socket factory
+    Registry<ConnectionSocketFactory> socketFactoryRegistry =
+        RegistryBuilder.<ConnectionSocketFactory>create()
+            .register("https", f)
+            .register("http", PlainConnectionSocketFactory.getSocketFactory())
+            .build();
 
     // proxy settings
     if (key.usesProxy()) {
@@ -382,11 +363,30 @@ public class HttpUtil {
             "proxy port number is not provided, please assign proxy port to http.proxyPort option");
       }
 
+      // Below pooling client connection manager uses time_to_live value as -1 which means it will
+      // not
+      // refresh a persisted connection. We create the filtering resolver first, then wrap it in our
+      // adapter so that it implements the Snowflake-shaded DnsResolver interface expected by the
+      // connection manager.
+      FilteringDnsResolver filteringDnsResolver =
+          new FilteringDnsResolver(
+              key.isDisallowLocalIps(),
+              key.isDisallowPrivateIps(),
+              key.isDisallowClassEIps(),
+              key.getDisallowCidrRanges(),
+              key.getAllowCidrRanges());
+
+      DnsResolver dnsResolverAdapter = new FilteringDnsResolverAdapter(filteringDnsResolver);
+
+      connectionManager =
+          new PoolingHttpClientConnectionManager(socketFactoryRegistry, dnsResolverAdapter);
+      clientBuilder.setDnsResolver(dnsResolverAdapter);
+
       String proxyHost = key.getProxyHost();
       int proxyPort = key.getProxyPort();
       HttpHost proxy = new HttpHost(proxyHost, proxyPort, PROXY_SCHEME);
       DefaultProxyRoutePlanner routePlanner = new DefaultProxyRoutePlanner(proxy);
-      clientBuilder = clientBuilder.setRoutePlanner(routePlanner);
+      clientBuilder.setRoutePlanner(routePlanner);
 
       // Check if proxy username and password are set
       final String proxyUser = key.getProxyUser();
@@ -397,14 +397,18 @@ public class HttpUtil {
         AuthScope authScope = new AuthScope(proxyHost, proxyPort);
         CredentialsProvider credentialsProvider = new BasicCredentialsProvider();
         credentialsProvider.setCredentials(authScope, credentials);
-        clientBuilder = clientBuilder.setDefaultCredentialsProvider(credentialsProvider);
+        clientBuilder.setDefaultCredentialsProvider(credentialsProvider);
       } else {
         LOGGER.debug(
             "HTTP client configured with proxy but no authentication credentials provided");
       }
     } else {
       LOGGER.debug("Configuring HTTP client without proxy settings");
+      connectionManager = new PoolingHttpClientConnectionManager(socketFactoryRegistry);
     }
+    connectionManager.setDefaultMaxPerRoute(DEFAULT_MAX_CONNECTIONS_PER_ROUTE);
+    connectionManager.setMaxTotal(DEFAULT_MAX_CONNECTIONS);
+    clientBuilder.setConnectionManager(connectionManager);
 
     CloseableHttpClient httpClient = clientBuilder.build();
     initIdleConnectionMonitoringThread();
