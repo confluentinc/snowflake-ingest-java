@@ -9,6 +9,28 @@
   <packaging>jar</packaging>
   <name>Snowflake Ingest SDK</name>
   <description>Snowflake Ingest SDK</description>
+  <url>https://www.snowflake.net/</url>
+
+  <licenses>
+    <license>
+      <name>The Apache Software License, Version 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+    </license>
+  </licenses>
+
+  <developers>
+    <developer>
+      <name>Snowflake Support Team</name>
+      <email>snowflake-java@snowflake.net</email>
+      <organization>Snowflake Computing</organization>
+      <organizationUrl>https://www.snowflake.net</organizationUrl>
+    </developer>
+  </developers>
+
+  <scm>
+    <connection>scm:git:git://github.com/snowflakedb/snowflake-ingest-java</connection>
+    <url>https://github.com/snowflakedb/snowflake-ingest-java/tree/master</url>
+  </scm>
 
   <!-- Set our Language Level to Java 8 -->
   <properties>
@@ -21,7 +43,7 @@
     <commonslang3.version>3.12.0</commonslang3.version>
     <commonslogging.version>1.2</commonslogging.version>
     <commonstext.version>1.10.0</commonstext.version>
-    <fasterxml.version>2.14.0</fasterxml.version>
+    <fasterxml.version>2.16.1</fasterxml.version>
     <guava.version>32.0.1-jre</guava.version>
     <hadoop.version>3.3.6</hadoop.version>
     <jacoco.skip.instrument>true</jacoco.skip.instrument>
@@ -44,6 +66,7 @@
     <snappy.version>1.1.10.4</snappy.version>
     <snowjdbc.version>3.14.5</snowjdbc.version>
     <yetus.version>0.13.0</yetus.version>
+    <zstd-jni.version>1.5.5-1</zstd-jni.version>
   </properties>
 
   <dependencyManagement>
@@ -302,6 +325,11 @@
         <artifactId>snappy-java</artifactId>
         <version>${snappy.version}</version>
       </dependency>
+      <dependency>
+        <groupId>com.github.luben</groupId>
+        <artifactId>zstd-jni</artifactId>
+        <version>${zstd-jni.version}</version>
+      </dependency>
 
       <!-- JUnit so that we can make some basic unit tests -->
       <dependency>
@@ -333,6 +361,17 @@
 
   <!-- All of our needed dependencies -->
   <dependencies>
+    <dependency>
+      <groupId>io.confluent</groupId>
+      <artifactId>connect-utils</artifactId>
+      <version>0.6.4</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>connect-api</artifactId>
+      <version>3.6.1</version>
+      <scope>provided</scope>
+    </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-annotations</artifactId>
@@ -449,12 +488,6 @@
       <artifactId>slf4j-api</artifactId>
     </dependency>
     <dependency>
-      <groupId>com.github.luben</groupId>
-      <artifactId>zstd-jni</artifactId>
-      <version>1.5.0-1</version>
-      <scope>runtime</scope>
-    </dependency>
-    <dependency>
       <groupId>com.google.protobuf</groupId>
       <artifactId>protobuf-java</artifactId>
       <scope>runtime</scope>
@@ -512,6 +545,11 @@
       <version>${slf4j.version}</version>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>org.apache.httpcomponents</groupId>
+      <artifactId>httpclient</artifactId>
+      <version>4.5.14</version>
+    </dependency>
   </dependencies>
 
   <build>
@@ -531,8 +569,7 @@
       <plugins>
         <plugin>
           <artifactId>maven-deploy-plugin</artifactId>
-          <configuration>
-          </configuration>
+          <configuration></configuration>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
@@ -645,6 +682,11 @@
             <configuration>
               <failOnWarning>true</failOnWarning>
               <ignoreNonCompile>true</ignoreNonCompile>
+              <ignoredUnusedDeclaredDependencies>
+                <dependency>org.apache.httpcomponents:httpclient</dependency>
+                <dependency>org.apache.kafka:connect-api</dependency>
+                <dependency>com.github.luben:zstd-jni</dependency>
+              </ignoredUnusedDeclaredDependencies>
             </configuration>
           </execution>
         </executions>
@@ -663,6 +705,7 @@
                 <banDuplicateClasses>
                   <ignoreClasses>
                     <ignoreClass>META-INF/versions/*/org/bouncycastle/*</ignoreClass>
+                    <ignoreClass>META-INF/versions/*/com/fasterxml/jackson/*</ignoreClass>
                   </ignoreClasses>
                   <findAllDuplicates>true</findAllDuplicates>
                   <ignoreWhenIdentical>true</ignoreWhenIdentical>
@@ -747,6 +790,8 @@
             <includedLicense>EDL 1.0</includedLicense>
             <includedLicense>The Go license</includedLicense>
             <includedLicense>Bouncy Castle Licence</includedLicense>
+            <includedLicense>EPL 2.0</includedLicense>
+            <includedLicense>GPL2 w/ CPE</includedLicense>
           </includedLicenses>
           <excludedScopes>test,provided,system</excludedScopes>
           <failOnBlacklist>true</failOnBlacklist>
@@ -775,28 +820,6 @@
       </plugin>
     </plugins>
   </build>
-  <url>https://www.snowflake.net/</url>
-
-  <licenses>
-    <license>
-      <name>The Apache Software License, Version 2.0</name>
-      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
-    </license>
-  </licenses>
-
-  <developers>
-    <developer>
-      <name>Snowflake Support Team</name>
-      <email>snowflake-java@snowflake.net</email>
-      <organization>Snowflake Computing</organization>
-      <organizationUrl>https://www.snowflake.net</organizationUrl>
-    </developer>
-  </developers>
-
-  <scm>
-    <connection>scm:git:git://github.com/snowflakedb/snowflake-ingest-java</connection>
-    <url>https://github.com/snowflakedb/snowflake-ingest-java/tree/master</url>
-  </scm>
 
   <profiles>
     <profile>
@@ -927,13 +950,14 @@
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-shade-plugin</artifactId>
-            <version>3.4.1</version>
+            <version>3.5.2</version>
             <configuration>
               <artifactSet>
                 <excludes>
                   <exclude>net.snowflake:snowflake-jdbc</exclude>
                   <exclude>org.slf4j:slf4j-api</exclude>
                   <exclude>com.github.luben:zstd-jni</exclude>
+                  <exclude>org.apache.kafka:connect-api</exclude>
                 </excludes>
               </artifactSet>
               <relocations>
@@ -1098,6 +1122,7 @@
                 </goals>
                 <phase>generate-resources</phase>
                 <configuration>
+                  <skip>true</skip>
                   <executable>python3</executable>
                   <arguments>
                     <argument>${project.basedir}/scripts/process_licenses.py</argument>
