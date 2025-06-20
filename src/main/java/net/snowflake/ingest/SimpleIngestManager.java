@@ -15,27 +15,24 @@ import java.security.PrivateKey;
 import java.security.spec.InvalidKeySpecException;
 import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
+import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import net.snowflake.ingest.connection.ClientStatusResponse;
-import net.snowflake.ingest.connection.ConfigureClientResponse;
+import net.snowflake.client.jdbc.internal.apache.http.client.methods.CloseableHttpResponse;
+import net.snowflake.client.jdbc.internal.apache.http.client.methods.HttpGet;
+import net.snowflake.client.jdbc.internal.apache.http.client.methods.HttpPost;
+import net.snowflake.client.jdbc.internal.apache.http.impl.client.CloseableHttpClient;
 import net.snowflake.ingest.connection.HistoryRangeResponse;
 import net.snowflake.ingest.connection.HistoryResponse;
 import net.snowflake.ingest.connection.IngestResponse;
 import net.snowflake.ingest.connection.IngestResponseException;
-import net.snowflake.ingest.connection.InsertFilesClientInfo;
 import net.snowflake.ingest.connection.RequestBuilder;
 import net.snowflake.ingest.connection.ServiceResponseHandler;
 import net.snowflake.ingest.utils.BackOffException;
 import net.snowflake.ingest.utils.HttpUtil;
 import net.snowflake.ingest.utils.StagedFileWrapper;
 import net.snowflake.ingest.utils.Utils;
-import org.apache.http.HttpResponse;
-import org.apache.http.client.HttpClient;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.client.methods.HttpPost;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -197,7 +194,8 @@ public class SimpleIngestManager implements AutoCloseable {
   // logger object for this class
   private static final Logger LOGGER = LoggerFactory.getLogger(SimpleIngestManager.class);
   // HTTP Client that we use for sending requests to the service
-  private HttpClient httpClient;
+  private CloseableHttpClient httpClient;
+  private boolean httpClientClosed = false;
 
   // the account in which the user lives
   private String account;
@@ -388,6 +386,27 @@ public class SimpleIngestManager implements AutoCloseable {
         new RequestBuilder(account, user, keyPair, schemeName, hostName, port, userAgentSuffix);
   }
 
+  /* Another flavor of constructor which supports userAgentSuffix and proxyProperties */
+  public SimpleIngestManager(
+      String account,
+      String user,
+      String pipe,
+      PrivateKey privateKey,
+      String schemeName,
+      String hostName,
+      int port,
+      String userAgentSuffix,
+      Properties proxyProperties)
+      throws NoSuchAlgorithmException, InvalidKeySpecException {
+    KeyPair keyPair = Utils.createKeyPairFromPrivateKey(privateKey);
+    // call our initializer method
+    init(account, user, pipe, keyPair, proxyProperties);
+
+    // make the request builder we'll use to build messages to the service
+    builder =
+        new RequestBuilder(account, user, keyPair, schemeName, hostName, port, userAgentSuffix);
+  }
+
   // ========= Constructors End =========
 
   /**
@@ -400,14 +419,43 @@ public class SimpleIngestManager implements AutoCloseable {
    * @param keyPair the KeyPair we'll use to sign JWT tokens
    */
   private void init(String account, String user, String pipe, KeyPair keyPair) {
+    init(account, user, pipe, keyPair, new Properties());
+  }
+
+  /**
+   * init - Does the basic work of constructing a SimpleIngestManager that is common across all
+   * constructors
+   *
+   * @param account The account into which we're loading
+   * @param user the user performing this load
+   * @param pipe the fully qualified name of pipe
+   * @param keyPair the KeyPair we'll use to sign JWT tokens
+   * @param proxyProperties proxy properties for HTTP client configuration
+   */
+  private void init(
+      String account, String user, String pipe, KeyPair keyPair, Properties proxyProperties) {
     // set up our reference variables
     this.account = account;
     this.user = user;
     this.pipe = pipe;
     this.keyPair = keyPair;
 
-    // make our client for sending requests
-    httpClient = HttpUtil.getHttpClient();
+    // make our client for sending requests with proxy properties support
+    if (proxyProperties != null && !proxyProperties.isEmpty()) {
+      LOGGER.debug(
+          "Creating HTTP client for SimpleIngestManager with proxy properties for account: {},"
+              + " user: {}",
+          account,
+          user);
+    } else {
+      LOGGER.debug(
+          "Creating HTTP client for SimpleIngestManager without proxy properties for account: {},"
+              + " user: {}",
+          account,
+          user);
+    }
+
+    httpClient = HttpUtil.getHttpClient(account, proxyProperties);
     // make the request builder we'll use to build messages to the service
   }
 
@@ -524,53 +572,20 @@ public class SimpleIngestManager implements AutoCloseable {
   public IngestResponse ingestFiles(
       List<StagedFileWrapper> files, UUID requestId, boolean showSkippedFiles)
       throws URISyntaxException, IOException, IngestResponseException, BackOffException {
-    return ingestFiles(files, requestId, showSkippedFiles, null /* Client info is null */);
-  }
-
-  /**
-   * ingestFiles With Client Info - synchronously sends a request to the ingest service to enqueue
-   * these files along with clientSequencer and offSetToken.
-   *
-   * <p>OffsetToken will be atomically persisted on server(Snowflake) side along with files if the
-   * clientSequencer added in this request matches with what Snowflake currently has.
-   *
-   * <p>If clientSequencers doesnt match, 400 response code is sent back and no files will be added.
-   *
-   * @param files - list of wrappers around filenames and sizes
-   * @param requestId - a requestId that we'll use to label - if null, we generate one for the user
-   * @param showSkippedFiles - a flag which returns the files that were skipped when set to true.
-   * @param clientInfo - clientSequencer and offsetToken to pass along with files. Can be null.
-   * @return an insert response from the server
-   * @throws URISyntaxException - if the provided account name was illegal and caused a URI
-   *     construction failure
-   * @throws IOException - if we have some other network failure
-   * @throws IngestResponseException - if snowflake encountered error during ingest
-   * @throws BackOffException - if we have a 503 response
-   */
-  public IngestResponse ingestFiles(
-      List<StagedFileWrapper> files,
-      UUID requestId,
-      boolean showSkippedFiles,
-      InsertFilesClientInfo clientInfo)
-      throws URISyntaxException, IOException, IngestResponseException, BackOffException {
-
     // the request id we want to send with this payload
     if (requestId == null || requestId.toString().isEmpty()) {
       requestId = UUID.randomUUID();
     }
 
     HttpPost httpPostForIngestFile =
-        builder.generateInsertRequest(
-            requestId, pipe, files, showSkippedFiles, Optional.ofNullable(clientInfo));
+        builder.generateInsertRequest(requestId, pipe, files, showSkippedFiles);
 
     // send the request and get a response....
-    HttpResponse response = httpClient.execute(httpPostForIngestFile);
-
-    LOGGER.info(
-        "Attempting to unmarshall insert response - {}, with clientInfo - {}",
-        response,
-        clientInfo);
-    return ServiceResponseHandler.unmarshallIngestResponse(response, requestId);
+    try (CloseableHttpResponse response = httpClient.execute(httpPostForIngestFile)) {
+      LOGGER.info("Attempting to unmarshall insert response - {}", response);
+      return ServiceResponseHandler.unmarshallIngestResponse(
+          response, requestId, httpClient, httpPostForIngestFile, builder);
+    }
   }
 
   /**
@@ -597,10 +612,11 @@ public class SimpleIngestManager implements AutoCloseable {
         builder.generateHistoryRequest(requestId, pipe, recentSeconds, beginMark);
 
     // send the request and get a response...
-    HttpResponse response = httpClient.execute(httpGetHistory);
-
-    LOGGER.info("Attempting to unmarshall history response - {}", response);
-    return ServiceResponseHandler.unmarshallHistoryResponse(response, requestId);
+    try (CloseableHttpResponse response = httpClient.execute(httpGetHistory)) {
+      LOGGER.info("Attempting to unmarshall history response - {}", response);
+      return ServiceResponseHandler.unmarshallHistoryResponse(
+          response, requestId, httpClient, httpGetHistory, builder);
+    }
   }
 
   /**
@@ -626,57 +642,14 @@ public class SimpleIngestManager implements AutoCloseable {
       requestId = UUID.randomUUID();
     }
 
-    HttpResponse response =
-        httpClient.execute(
-            builder.generateHistoryRangeRequest(
-                requestId, pipe, startTimeInclusive, endTimeExclusive));
+    HttpGet request =
+        builder.generateHistoryRangeRequest(requestId, pipe, startTimeInclusive, endTimeExclusive);
 
-    LOGGER.info("Attempting to unmarshall history range response - {}", response);
-    return ServiceResponseHandler.unmarshallHistoryRangeResponse(response, requestId);
-  }
-
-  /**
-   * Register a snowpipe client and returns the client sequencer
-   *
-   * @param requestId a UUID we use to label the request, if null, one is generated for the user
-   * @return
-   * @throws URISyntaxException - if the provided account name was illegal and caused a URI
-   *     construction failure
-   * @throws IOException - if we have some other network failure
-   * @throws IngestResponseException - if snowflake encountered error during ingest
-   * @throws BackOffException - if we have a 503 response
-   */
-  public ConfigureClientResponse configureClient(UUID requestId)
-      throws URISyntaxException, IOException, IngestResponseException, BackOffException {
-    if (requestId == null || requestId.toString().isEmpty()) {
-      requestId = UUID.randomUUID();
+    try (CloseableHttpResponse response = httpClient.execute(request)) {
+      LOGGER.info("Attempting to unmarshall history range response - {}", response);
+      return ServiceResponseHandler.unmarshallHistoryRangeResponse(
+          response, requestId, httpClient, request, builder);
     }
-    HttpResponse response =
-        httpClient.execute(builder.generateConfigureClientRequest(requestId, pipe));
-    LOGGER.info("Attempting to unmarshall configure client response - {}", response);
-    return ServiceResponseHandler.unmarshallConfigureClientResponse(response, requestId);
-  }
-
-  /**
-   * Get client status for snowpipe which contains offset token and client sequencer
-   *
-   * @param requestId a UUID we use to label the request, if null, one is generated for the user
-   * @return
-   * @throws URISyntaxException - if the provided account name was illegal and caused a URI
-   *     construction failure
-   * @throws IOException - if we have some other network failure
-   * @throws IngestResponseException - if snowflake encountered error during ingest
-   * @throws BackOffException - if we have a 503 response
-   */
-  public ClientStatusResponse getClientStatus(UUID requestId)
-      throws URISyntaxException, IOException, IngestResponseException, BackOffException {
-    if (requestId == null || requestId.toString().isEmpty()) {
-      requestId = UUID.randomUUID();
-    }
-    HttpResponse response =
-        httpClient.execute(builder.generateGetClientStatusRequest(requestId, pipe));
-    LOGGER.info("Attempting to unmarshall get client status response - {}", response);
-    return ServiceResponseHandler.unmarshallGetClientStatus(response, requestId);
   }
 
   /**
@@ -687,6 +660,7 @@ public class SimpleIngestManager implements AutoCloseable {
   @Override
   public void close() {
     builder.closeResources();
+    HttpUtil.shutdownHttpConnectionManagerDaemonThread();
   }
 
   /* Used for testing */

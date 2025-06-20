@@ -71,6 +71,12 @@ public class Logging {
     }
   }
 
+  public void logWarn(String format, Throwable e) {
+    if (log.isWarnEnabled()) {
+      log.warn(format, e);
+    }
+  }
+
   public void logWarn(String format, Object... vars) {
     if (log.isWarnEnabled()) {
       log.warn(format, vars);
@@ -108,7 +114,7 @@ public class Logging {
    * @return log message wrapped by snowflake tag
    */
   private static String logMessage(String msg) {
-    return "\n".concat(msg).replaceAll("\n", "\n" + SF_LOG_TAG + " ");
+    return SF_LOG_TAG + " " + msg;
   }
 
   /**

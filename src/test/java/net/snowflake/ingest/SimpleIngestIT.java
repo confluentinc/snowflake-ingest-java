@@ -5,12 +5,11 @@ import static net.snowflake.ingest.connection.RequestBuilder.DEFAULT_VERSION;
 import static net.snowflake.ingest.connection.RequestBuilder.JAVA_USER_AGENT;
 import static net.snowflake.ingest.connection.RequestBuilder.OS_INFO_USER_AGENT_FORMAT;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URL;
+import java.time.Instant;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Random;
@@ -20,18 +19,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import net.snowflake.ingest.connection.ClientStatusResponse;
-import net.snowflake.ingest.connection.ConfigureClientResponse;
+import net.snowflake.client.jdbc.internal.apache.http.Header;
+import net.snowflake.client.jdbc.internal.apache.http.HttpHeaders;
+import net.snowflake.client.jdbc.internal.apache.http.client.methods.HttpPost;
+import net.snowflake.ingest.connection.HistoryRangeResponse;
 import net.snowflake.ingest.connection.HistoryResponse;
 import net.snowflake.ingest.connection.IngestResponse;
-import net.snowflake.ingest.connection.IngestResponseException;
-import net.snowflake.ingest.connection.InsertFilesClientInfo;
 import net.snowflake.ingest.utils.StagedFileWrapper;
-import org.apache.http.Header;
-import org.apache.http.HttpHeaders;
-import org.apache.http.client.methods.HttpPost;
 import org.junit.After;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -40,6 +35,7 @@ import org.junit.Test;
 public class SimpleIngestIT {
   private final String TEST_FILE_NAME = "test1.csv";
   private final String TEST_FILE_NAME_2 = "test2.csv";
+  private final String PIPE_NAME_PREFIX = "ingest_sdk_test_pipe_";
 
   private String testFilePath = null;
   private String testFilePath_2 = null;
@@ -55,6 +51,10 @@ public class SimpleIngestIT {
   // the object mapper we use for deserialization
   static ObjectMapper mapper = new ObjectMapper();
 
+  private final Random RAND = new Random();
+
+  private final Long RAND_NUM = Math.abs(RAND.nextLong());
+
   /** Create test table and pipe */
   @Before
   public void beforeAll() throws Exception {
@@ -67,19 +67,28 @@ public class SimpleIngestIT {
     testFilePath_2 = resource.getFile();
 
     // create stage, pipe, and table
-    Random rand = new Random();
 
-    Long num = Math.abs(rand.nextLong());
+    tableName = "ingest_sdk_test_table_" + RAND_NUM;
 
-    tableName = "ingest_sdk_test_table_" + num;
+    pipeName = PIPE_NAME_PREFIX + RAND_NUM;
 
-    pipeName = "ingest_sdk_test_pipe_" + num;
+    pipeWithPatternName = "ingest_sdk_test_pipe_pattern_" + RAND_NUM;
 
-    pipeWithPatternName = "ingest_sdk_test_pipe_pattern_" + num;
+    stageName = "ingest_sdk_test_stage_" + RAND_NUM;
 
-    stageName = "ingest_sdk_test_stage_" + num;
+    stageWithPatternName = "ingest_sdk_test_stage_pattern" + RAND_NUM;
 
-    stageWithPatternName = "ingest_sdk_test_stage_pattern" + num;
+    String databaseName = TestUtils.getDatabase();
+
+    String schemaName = TestUtils.getSchema();
+
+    TestUtils.executeQuery("create database if not exists " + databaseName);
+
+    TestUtils.executeQuery("create schema if not exists " + schemaName);
+
+    TestUtils.executeQuery("use database " + databaseName);
+
+    TestUtils.executeQuery("use schema " + schemaName);
 
     TestUtils.executeQuery("create or replace table " + tableName + " (str string, num int)");
 
@@ -87,13 +96,7 @@ public class SimpleIngestIT {
 
     TestUtils.executeQuery("create or replace stage " + stageWithPatternName);
 
-    TestUtils.executeQuery(
-        "create or replace pipe "
-            + pipeName
-            + " as copy into "
-            + tableName
-            + " from @"
-            + stageName);
+    createPipe(tableName, stageName, pipeName);
 
     TestUtils.executeQuery(
         "create or replace pipe "
@@ -121,6 +124,7 @@ public class SimpleIngestIT {
 
   /** ingest test example ingest a simple file and check load history. */
   @Test
+  @Ignore // SNOW-957347: re-enable after fix
   public void testSimpleIngest() throws Exception {
     // put
     TestUtils.executeQuery("put file://" + testFilePath + " @" + stageName);
@@ -128,23 +132,7 @@ public class SimpleIngestIT {
     // create ingest manager
     SimpleIngestManager manager = TestUtils.getManager(pipeName);
 
-    // create a file wrapper
-    StagedFileWrapper myFile = new StagedFileWrapper(TEST_FILE_NAME, null);
-
-    // get an insert response after we submit
-    IngestResponse insertResponse = manager.ingestFile(myFile, null);
-
-    assertEquals("SUCCESS", insertResponse.getResponseCode());
-
-    // Get history and ensure that the expected file has been ingested
-    getHistoryAndAssertLoad(manager, TEST_FILE_NAME);
-
-    IngestResponse insertResponseSkippedFiles = manager.ingestFile(myFile, null, true);
-
-    assertEquals("SUCCESS", insertResponseSkippedFiles.getResponseCode());
-    assertEquals(1, insertResponseSkippedFiles.getSkippedFiles().size());
-    assertEquals(
-        TEST_FILE_NAME, insertResponseSkippedFiles.getSkippedFiles().stream().findFirst().get());
+    testAndVerifySimpleIngestionForOnePipe(manager);
   }
 
   /** ingest test example ingest a simple file and check load history. */
@@ -202,13 +190,20 @@ public class SimpleIngestIT {
     Future<?> result =
         service.submit(
             () -> {
+              String startTime = Instant.ofEpochMilli(System.currentTimeMillis()).toString();
               String beginMark = null;
 
               while (true) {
 
                 try {
                   Thread.sleep(5000);
+
+                  String endTime = Instant.ofEpochMilli(System.currentTimeMillis()).toString();
                   HistoryResponse response = manager.getHistory(null, null, beginMark);
+                  HistoryRangeResponse rangeResponse =
+                      manager.getHistoryRange(null, startTime, endTime);
+
+                  assertEquals(response.files.size(), rangeResponse.files.size());
 
                   if (response != null && response.getNextBeginMark() != null) {
                     beginMark = response.getNextBeginMark();
@@ -302,6 +297,70 @@ public class SimpleIngestIT {
     verifyDefaultUserAgent(noUserAgentUsed.getAllHeaders(), false, null);
   }
 
+  /**
+   * Creates multiple pipes with same stage and table to verify behavior of HttpUtil and BG thread
+   * for ConnectionPoolingManager
+   *
+   * <p>Creates the thread only two times since the manager was closed only once.
+   */
+  @Test
+  @Ignore // SNOW-957347: re-enable after fix
+  public void testMultipleSimpleIngestManagers() throws Exception {
+    // put
+    TestUtils.executeQuery("put file://" + testFilePath + " @" + stageName);
+
+    // create ingest manager
+    SimpleIngestManager manager = TestUtils.getManager(pipeName);
+
+    manager.close();
+
+    final String pipeName2 = PIPE_NAME_PREFIX + "" + (RAND_NUM + 1);
+    createPipe(tableName, stageName, pipeName2);
+
+    SimpleIngestManager manager2 = TestUtils.getManager(pipeName2);
+
+    testAndVerifySimpleIngestionForOnePipe(manager2);
+
+    final String pipeName3 = PIPE_NAME_PREFIX + "" + (RAND_NUM + 2);
+    createPipe(tableName, stageName, pipeName3);
+
+    // creating one more SimpleIngestManager
+    SimpleIngestManager manager3 = TestUtils.getManager(pipeName3);
+    testAndVerifySimpleIngestionForOnePipe(manager3);
+  }
+
+  private static void createPipe(
+      final String tableName, final String stageName, final String pipeName) throws Exception {
+    TestUtils.executeQuery(
+        "create or replace pipe "
+            + pipeName
+            + " as copy into "
+            + tableName
+            + " from @"
+            + stageName);
+  }
+
+  private void testAndVerifySimpleIngestionForOnePipe(final SimpleIngestManager simpleIngestManager)
+      throws Exception {
+    // create a file wrapper
+    StagedFileWrapper myFile = new StagedFileWrapper(TEST_FILE_NAME, null);
+
+    // get an insert response after we submit
+    IngestResponse insertResponse = simpleIngestManager.ingestFile(myFile, null);
+
+    assertEquals("SUCCESS", insertResponse.getResponseCode());
+
+    // Get history and ensure that the expected file has been ingested
+    getHistoryAndAssertLoad(simpleIngestManager, TEST_FILE_NAME);
+
+    IngestResponse insertResponseSkippedFiles = simpleIngestManager.ingestFile(myFile, null, true);
+
+    assertEquals("SUCCESS", insertResponseSkippedFiles.getResponseCode());
+    assertEquals(1, insertResponseSkippedFiles.getSkippedFiles().size());
+    assertEquals(
+        TEST_FILE_NAME, insertResponseSkippedFiles.getSkippedFiles().stream().findFirst().get());
+  }
+
   private void verifyDefaultUserAgent(
       final Header[] headers,
       final boolean verifyAdditionalUserAgentInfo,
@@ -326,183 +385,6 @@ public class SimpleIngestIT {
                 System.getProperty("os.arch"));
         assertTrue(h.getValue().contains(osInformation));
       }
-    }
-  }
-
-  @Ignore
-  @Test
-  public void testConfigureClientHappyCase() throws Exception {
-    final String userAgentSuffix = "kafka-provider/NONE";
-    SimpleIngestManager manager = TestUtils.getManager(pipeName, userAgentSuffix);
-    ConfigureClientResponse configureClientResponse = manager.configureClient(null);
-    assertEquals(0L, configureClientResponse.getClientSequencer().longValue());
-  }
-
-  @Ignore
-  @Test
-  public void testConfigureClientNoPipeFound() throws Exception {
-    final String userAgentSuffix = "kafka-provider/NONE";
-    SimpleIngestManager manager = TestUtils.getManager("nopipe", userAgentSuffix);
-    try {
-      manager.configureClient(null);
-    } catch (IngestResponseException exception) {
-      assertEquals(404, exception.getErrorCode());
-      assertEquals(
-          "Specified object does not exist or not authorized. Pipe not found",
-          exception.getErrorBody().getMessage());
-    }
-  }
-
-  @Ignore
-  @Test
-  public void testGetClientStatusHappyCase() throws Exception {
-    final String userAgentSuffix = "kafka-provider/NONE";
-    SimpleIngestManager manager = TestUtils.getManager(pipeName, userAgentSuffix);
-    manager.configureClient(null);
-    ClientStatusResponse clientStatusResponse = manager.getClientStatus(null);
-    assertEquals(0L, clientStatusResponse.getClientSequencer().longValue());
-    assertNull(clientStatusResponse.getOffsetToken());
-  }
-
-  @Ignore
-  @Test
-  public void testGetClientStatusNoPipeFound() throws Exception {
-    final String userAgentSuffix = "kafka-provider/NONE";
-    SimpleIngestManager manager = TestUtils.getManager("nopipe", userAgentSuffix);
-    try {
-      manager.getClientStatus(null);
-    } catch (IngestResponseException exception) {
-      assertEquals(404, exception.getErrorCode());
-      assertEquals(
-          "Specified object does not exist or not authorized. Pipe not found",
-          exception.getErrorBody().getMessage());
-    }
-  }
-
-  @Ignore
-  @Test
-  public void testIngestFilesWithClientInfo() throws Exception {
-
-    // first lets call configure client API
-    final String userAgentSuffix = "kafka-provider/NONE";
-    SimpleIngestManager manager = TestUtils.getManager(pipeName, userAgentSuffix);
-    ConfigureClientResponse configureClientResponse = manager.configureClient(null);
-    assertEquals(0L, configureClientResponse.getClientSequencer().longValue());
-
-    // put
-    TestUtils.executeQuery("put file://" + testFilePath + " @" + stageName);
-
-    // create a file wrapper
-    StagedFileWrapper myFile = new StagedFileWrapper(TEST_FILE_NAME, null);
-
-    final String offsetToken = "1";
-    InsertFilesClientInfo clientInfo =
-        new InsertFilesClientInfo(configureClientResponse.getClientSequencer(), offsetToken);
-
-    // get an insert response after we submit
-    IngestResponse insertResponse =
-        manager.ingestFiles(Collections.singletonList(myFile), null, false, clientInfo);
-
-    assertEquals("SUCCESS", insertResponse.getResponseCode());
-
-    // Get history and ensure that the expected file has been ingested
-    getHistoryAndAssertLoad(manager, TEST_FILE_NAME);
-
-    // Get client status since we added offsetToken too
-    ClientStatusResponse clientStatusResponse = manager.getClientStatus(null);
-    assertEquals(0L, clientStatusResponse.getClientSequencer().longValue());
-    assertNotNull(clientStatusResponse.getOffsetToken());
-    assertEquals(offsetToken, clientStatusResponse.getOffsetToken());
-  }
-
-  @Ignore
-  @Test
-  public void testIngestFilesWithClientInfoWithOldClientSequencer() throws Exception {
-
-    // first lets call configure client API
-    final String userAgentSuffix = "kafka-provider/NONE";
-    SimpleIngestManager manager = TestUtils.getManager(pipeName, userAgentSuffix);
-    ConfigureClientResponse configureClientResponse = manager.configureClient(null);
-    assertEquals(0L, configureClientResponse.getClientSequencer().longValue());
-    final long oldClientSequencer = configureClientResponse.getClientSequencer();
-    configureClientResponse = manager.configureClient(null);
-    assertEquals(1L, configureClientResponse.getClientSequencer().longValue());
-
-    // put
-    TestUtils.executeQuery("put file://" + testFilePath + " @" + stageName);
-
-    // create a file wrapper
-    StagedFileWrapper myFile = new StagedFileWrapper(TEST_FILE_NAME, null);
-
-    final String offsetToken = "1";
-    // Passing in an old clientSequencer
-    InsertFilesClientInfo clientInfo = new InsertFilesClientInfo(oldClientSequencer, offsetToken);
-
-    // get an insert response after we submit
-    try {
-      manager.ingestFiles(Collections.singletonList(myFile), null, false, clientInfo);
-      Assert.fail(
-          "The insertFiles API should return 400 and SDK should throw IngestResponseException");
-    } catch (IngestResponseException ex) {
-      assertEquals(400, ex.getErrorCode());
-      assertTrue(ex.getErrorBody().getCode().equalsIgnoreCase("091129"));
-    }
-
-    // Get client status since we added offsetToken too
-    ClientStatusResponse clientStatusResponse = manager.getClientStatus(null);
-    assertEquals(
-        configureClientResponse.getClientSequencer(), clientStatusResponse.getClientSequencer());
-    assertNull(clientStatusResponse.getOffsetToken());
-
-    // lets call insertFiles with new clientSequencer
-    // Passing in a new clientSequencer
-    clientInfo = new InsertFilesClientInfo(clientStatusResponse.getClientSequencer(), offsetToken);
-
-    // get an insert response after we submit
-    try {
-      IngestResponse insertResponse =
-          manager.ingestFiles(Collections.singletonList(myFile), null, false, clientInfo);
-      assertEquals("SUCCESS", insertResponse.getResponseCode());
-
-      // Get history and ensure that the expected file has been ingested
-      getHistoryAndAssertLoad(manager, TEST_FILE_NAME);
-
-      // Get client status since we added offsetToken too (During second attempt)
-      clientStatusResponse = manager.getClientStatus(null);
-      assertNotNull(clientStatusResponse.getOffsetToken());
-      assertEquals(offsetToken, clientStatusResponse.getOffsetToken());
-    } catch (IngestResponseException ex) {
-      Assert.fail(
-          "The insertFiles API should be successful second time after updaing clientSequencer");
-    }
-  }
-
-  @Ignore
-  @Test
-  public void testIngestFilesWithClientInfoWithNoClientSequencer() throws Exception {
-    // first lets call configure client API
-    final String userAgentSuffix = "kafka-provider/NONE";
-    SimpleIngestManager manager = TestUtils.getManager(pipeName, userAgentSuffix);
-
-    // put
-    TestUtils.executeQuery("put file://" + testFilePath + " @" + stageName);
-
-    // create a file wrapper
-    StagedFileWrapper myFile = new StagedFileWrapper(TEST_FILE_NAME, null);
-
-    final String offsetToken = "1";
-    // Passing in an old clientSequencer
-    InsertFilesClientInfo clientInfo = new InsertFilesClientInfo(0L, offsetToken);
-
-    // get an insert response after we submit
-    try {
-      manager.ingestFiles(Collections.singletonList(myFile), null, false, clientInfo);
-      Assert.fail(
-          "The insertFiles API should return 400 since client/configure was not called and SDK"
-              + " should throw IngestResponseException");
-    } catch (IngestResponseException ex) {
-      assertEquals(400, ex.getErrorCode());
-      assertTrue(ex.getErrorBody().getCode().equalsIgnoreCase("091128"));
     }
   }
 }

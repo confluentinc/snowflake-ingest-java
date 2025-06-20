@@ -1,0 +1,161 @@
+<LinkageCheckerFilter>
+    <!-- Optional dependencies -->
+    <LinkageError>
+        <Source>
+            <Package name="com.nimbusds.jose"/>
+        </Source>
+        <Target>
+            <Package name="org.bouncycastle"/>
+        </Target>
+        <Reason>Bouncy castle is an optional dependency of nimbus-jose-jwt</Reason>
+    </LinkageError>
+    <LinkageError>
+        <Source>
+            <Package name="com.nimbusds.jose"/>
+        </Source>
+        <Target>
+            <Package name="com.google.crypto.tink.subtle"/>
+        </Target>
+        <Reason>Google Crypto Tink is an optional dependency of nimbus-jose-jwt</Reason>
+    </LinkageError>
+
+    <LinkageError>
+        <Target>
+            <Class name="org.bouncycastle.asn1.x509.qualified.QCStatement" />
+        </Target>
+        <Reason>Seems like a false positive, this class does exist on classpath.</Reason>
+    </LinkageError>
+    <LinkageError>
+        <Target>
+            <Class name="org.bouncycastle.asn1.x9.X9FieldID" />
+        </Target>
+        <Reason>Seems like a false positive, this class does exist on classpath.</Reason>
+    </LinkageError>
+    <!-- Hadoop-related linkage errors-->
+    <LinkageError>
+        <Source>
+            <Class name="org.apache.hadoop.http.HttpServer2"/>
+        </Source>
+        <Reason>Not used in the SDK</Reason>
+    </LinkageError>
+    <LinkageError>
+        <Target>
+            <Class name="org.apache.hadoop.util.PlatformName"/>
+        </Target>
+        <Source>
+            <Class name="org.apache.hadoop.security.ssl.SSLFactory"/>
+        </Source>
+        <Reason>Relates to security/SSL pulled in by hadoop-auth, not used</Reason>
+    </LinkageError>
+    <LinkageError>
+        <Target>
+            <Package name="org.apache.hadoop.security.authentication"/>
+        </Target>
+        <Reason>We do not need Hadoop authentication</Reason>
+    </LinkageError>
+
+    <!-- Snowflake JDBC linkage errors -->
+    <LinkageError>
+        <Source>
+            <Package name="net.snowflake.client.jdbc"/>
+        </Source>
+        <Reason>We don't explicitly exclude any dependency of the JDBC driver.
+            If some classes are missing, they know what are they doing.
+        </Reason>
+    </LinkageError>
+    <LinkageError>
+        <Target>
+            <Package name="com.sun.jna"/>
+        </Target>
+        <Source>
+            <Package name="net.snowflake.client.core"/>
+        </Source>
+        <Reason>Optional dependency of Snowflake JDBC driver that the SDK doesn't need</Reason>
+    </LinkageError>
+
+    <!-- Other linkage errors-->
+    <LinkageError>
+        <Target>
+            <Class name="org.eclipse.jetty.servlet.DefaultServlet"/>
+        </Target>
+    </LinkageError>
+
+    <LinkageError>
+        <Source>
+            <Package name="org.apache.hadoop.mapred"/>
+        </Source>
+        <Reason>The SDK is not using mapreduce</Reason>
+    </LinkageError>
+    <LinkageError>
+        <Source>
+            <Class name="org.apache.hadoop.mapreduce.task.reduce.ShuffleClientMetrics"/>
+        </Source>
+        <Reason>The SDK is not using mapreduce</Reason>
+    </LinkageError>
+    <LinkageError>
+        <Target>
+            <Package name="org.apache.hadoop.yarn"/>
+        </Target>
+        <Reason>The SDK is not using Hadoop YARN</Reason>
+    </LinkageError>
+    <LinkageError>
+        <Target>
+            <Package name="org.tukaani.xz"/>
+        </Target>
+        <Reason>The SDK does not use XZ compression</Reason>
+    </LinkageError>
+    <LinkageError>
+        <Target>
+            <Package name="org.apache.curator"/>
+        </Target>
+        <Reason>Client library for Apache ZooKeeper, not used in the SDK</Reason>
+    </LinkageError>
+    <LinkageError>
+        <Target>
+            <Package name="com.jcraft.jsch"/>
+        </Target>
+        <Reason>SSH client, not used in the SDK</Reason>
+    </LinkageError>
+    <LinkageError>
+        <Target>
+            <Package name="org.apache.avro"/>
+        </Target>
+        <Reason>The SDK is not using Avro</Reason>
+    </LinkageError>
+    <LinkageError>
+        <Target>
+            <Package name="org.codehaus.jackson"/>
+        </Target>
+        <Reason>Not used, the SDK is using FasterXML Jackson</Reason>
+    </LinkageError>
+    <LinkageError>
+        <Target>
+            <Package name="org.xbill.DNS"/>
+        </Target>
+        <Reason>Comes from dnsjava, which is not used in the SDK</Reason>
+    </LinkageError>
+    <LinkageError>
+        <Target>
+            <Package name="org.apache.zookeeper"/>
+        </Target>
+        <Reason>Not used in the SDK</Reason>
+    </LinkageError>
+    <LinkageError>
+        <Target>
+            <Package name="org.apache.log4j"/>
+        </Target>
+        <Reason>The SDK does not log with log4j</Reason>
+    </LinkageError>
+    <LinkageError>
+        <Target>
+            <Package name="javax.ws.rs" />
+        </Target>
+        <Reason>The SDK does not use web services</Reason>
+    </LinkageError>
+    <LinkageError>
+        <Target>
+            <Package name="org.eclipse.jetty.server" />
+        </Target>
+        <Reason>The SDK does not use Jetty web server</Reason>
+    </LinkageError>
+</LinkageCheckerFilter>

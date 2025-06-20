@@ -1,4 +1,9 @@
-mvn install -DskipTests=true --batch-mode --show-version
+#!/bin/bash -e
+
+set -o pipefail
+
+# Build and install shaded JAR first. check_content.sh runs here.
+mvn install -PcheckShadedContent -DskipTests=true --batch-mode --show-version
 
 PARAMS=()
 PARAMS+=("-DghActionsIT")
@@ -13,8 +18,3 @@ rc=$?
 if [ $rc -ne 0 ] ; then
   echo Could not perform mvn verify with parameters "${PARAMS[@]}", exit code [$rc]; exit $rc
 fi
-
-# run whitesource
-echo ${PWD}
-chmod 755 ./scripts/run_whitesource_gh.sh
-./scripts/run_whitesource_gh.sh

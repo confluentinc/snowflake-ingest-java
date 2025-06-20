@@ -4,17 +4,19 @@
 
 package net.snowflake.ingest.streaming.internal;
 
+import java.time.ZoneId;
+import net.snowflake.ingest.streaming.OffsetTokenVerificationFunction;
 import net.snowflake.ingest.streaming.OpenChannelRequest;
 import net.snowflake.ingest.utils.Utils;
 
 /** Builds a Streaming Ingest channel for a specific Streaming Ingest client */
 class SnowflakeStreamingIngestChannelFactory {
-  static SnowflakeStreamingIngestChannelBuilder builder(String name) {
-    return new SnowflakeStreamingIngestChannelBuilder(name);
+  static <T> SnowflakeStreamingIngestChannelBuilder<T> builder(String name) {
+    return new SnowflakeStreamingIngestChannelBuilder<>(name);
   }
 
   // Builder class to build a SnowflakeStreamingIngestChannel
-  static class SnowflakeStreamingIngestChannelBuilder {
+  static class SnowflakeStreamingIngestChannelBuilder<T> {
     private String name;
     private String dbName;
     private String schemaName;
@@ -22,68 +24,81 @@ class SnowflakeStreamingIngestChannelFactory {
     private String offsetToken;
     private Long channelSequencer;
     private Long rowSequencer;
-    private SnowflakeStreamingIngestClientInternal owningClient;
+    private SnowflakeStreamingIngestClientInternal<T> owningClient;
     private String encryptionKey;
     private Long encryptionKeyId;
     private OpenChannelRequest.OnErrorOption onErrorOption;
+    private ZoneId defaultTimezone;
+    private OffsetTokenVerificationFunction offsetTokenVerificationFunction;
 
     private SnowflakeStreamingIngestChannelBuilder(String name) {
       this.name = name;
     }
 
-    SnowflakeStreamingIngestChannelBuilder setDBName(String dbName) {
+    SnowflakeStreamingIngestChannelBuilder<T> setDBName(String dbName) {
       this.dbName = dbName;
       return this;
     }
 
-    SnowflakeStreamingIngestChannelBuilder setSchemaName(String schemaName) {
+    SnowflakeStreamingIngestChannelBuilder<T> setSchemaName(String schemaName) {
       this.schemaName = schemaName;
       return this;
     }
 
-    SnowflakeStreamingIngestChannelBuilder setTableName(String tableName) {
+    SnowflakeStreamingIngestChannelBuilder<T> setTableName(String tableName) {
       this.tableName = tableName;
       return this;
     }
 
-    SnowflakeStreamingIngestChannelBuilder setOffsetToken(String offsetToken) {
+    SnowflakeStreamingIngestChannelBuilder<T> setOffsetToken(String offsetToken) {
       this.offsetToken = offsetToken;
       return this;
     }
 
-    SnowflakeStreamingIngestChannelBuilder setChannelSequencer(Long sequencer) {
+    SnowflakeStreamingIngestChannelBuilder<T> setChannelSequencer(Long sequencer) {
       this.channelSequencer = sequencer;
       return this;
     }
 
-    SnowflakeStreamingIngestChannelBuilder setRowSequencer(Long sequencer) {
+    SnowflakeStreamingIngestChannelBuilder<T> setRowSequencer(Long sequencer) {
       this.rowSequencer = sequencer;
       return this;
     }
 
-    SnowflakeStreamingIngestChannelBuilder setEncryptionKey(String encryptionKey) {
+    SnowflakeStreamingIngestChannelBuilder<T> setEncryptionKey(String encryptionKey) {
       this.encryptionKey = encryptionKey;
       return this;
     }
 
-    SnowflakeStreamingIngestChannelBuilder setEncryptionKeyId(Long encryptionKeyId) {
+    SnowflakeStreamingIngestChannelBuilder<T> setEncryptionKeyId(Long encryptionKeyId) {
       this.encryptionKeyId = encryptionKeyId;
       return this;
     }
 
-    SnowflakeStreamingIngestChannelBuilder setOnErrorOption(
+    SnowflakeStreamingIngestChannelBuilder<T> setOnErrorOption(
         OpenChannelRequest.OnErrorOption onErrorOption) {
       this.onErrorOption = onErrorOption;
       return this;
     }
 
-    SnowflakeStreamingIngestChannelBuilder setOwningClient(
-        SnowflakeStreamingIngestClientInternal client) {
+    SnowflakeStreamingIngestChannelBuilder<T> setDefaultTimezone(ZoneId zoneId) {
+      this.defaultTimezone = zoneId;
+      return this;
+    }
+
+    SnowflakeStreamingIngestChannelBuilder<T> setOwningClient(
+        SnowflakeStreamingIngestClientInternal<T> client) {
       this.owningClient = client;
       return this;
     }
 
-    SnowflakeStreamingIngestChannelInternal build() {
+    SnowflakeStreamingIngestChannelBuilder<T> setOffsetTokenVerificationFunction(
+        OffsetTokenVerificationFunction function) {
+      this.offsetTokenVerificationFunction = function;
+      return this;
+    }
+
+    SnowflakeStreamingIngestChannelInternal<T> build() {
       Utils.assertStringNotNullOrEmpty("channel name", this.name);
       Utils.assertStringNotNullOrEmpty("table name", this.tableName);
       Utils.assertStringNotNullOrEmpty("schema name", this.schemaName);
@@ -94,7 +109,8 @@ class SnowflakeStreamingIngestChannelFactory {
       Utils.assertStringNotNullOrEmpty("encryption key", this.encryptionKey);
       Utils.assertNotNull("encryption key_id", this.encryptionKeyId);
       Utils.assertNotNull("on_error option", this.onErrorOption);
-      return new SnowflakeStreamingIngestChannelInternal(
+      Utils.assertNotNull("default timezone", this.defaultTimezone);
+      return new SnowflakeStreamingIngestChannelInternal<>(
           this.name,
           this.dbName,
           this.schemaName,
@@ -105,7 +121,10 @@ class SnowflakeStreamingIngestChannelFactory {
           this.owningClient,
           this.encryptionKey,
           this.encryptionKeyId,
-          this.onErrorOption);
+          this.onErrorOption,
+          this.defaultTimezone,
+          this.owningClient.getParameterProvider().getBlobFormatVersion(),
+          this.offsetTokenVerificationFunction);
     }
   }
 }

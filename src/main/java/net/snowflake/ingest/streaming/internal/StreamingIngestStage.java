@@ -4,12 +4,14 @@
 
 package net.snowflake.ingest.streaming.internal;
 
-import static net.snowflake.client.core.Constants.CLOUD_STORAGE_CREDENTIALS_EXPIRED;
 import static net.snowflake.ingest.connection.ServiceResponseHandler.ApiName.STREAMING_CLIENT_CONFIGURE;
+import static net.snowflake.ingest.streaming.internal.StreamingIngestUtils.executeWithRetries;
 import static net.snowflake.ingest.utils.Constants.CLIENT_CONFIGURE_ENDPOINT;
 import static net.snowflake.ingest.utils.Constants.RESPONSE_SUCCESS;
 import static net.snowflake.ingest.utils.HttpUtil.generateProxyPropertiesForJDBC;
+import static net.snowflake.ingest.utils.Utils.getStackTrace;
 
+import com.google.common.annotations.VisibleForTesting;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
@@ -20,6 +22,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import net.snowflake.client.core.OCSPMode;
 import net.snowflake.client.jdbc.SnowflakeFileTransferAgent;
 import net.snowflake.client.jdbc.SnowflakeFileTransferConfig;
@@ -27,24 +30,24 @@ import net.snowflake.client.jdbc.SnowflakeFileTransferMetadataV1;
 import net.snowflake.client.jdbc.SnowflakeSQLException;
 import net.snowflake.client.jdbc.cloud.storage.StageInfo;
 import net.snowflake.client.jdbc.internal.apache.commons.io.FileUtils;
+import net.snowflake.client.jdbc.internal.apache.http.impl.client.CloseableHttpClient;
 import net.snowflake.client.jdbc.internal.fasterxml.jackson.databind.JsonNode;
 import net.snowflake.client.jdbc.internal.fasterxml.jackson.databind.ObjectMapper;
 import net.snowflake.client.jdbc.internal.fasterxml.jackson.databind.node.ObjectNode;
 import net.snowflake.ingest.connection.IngestResponseException;
 import net.snowflake.ingest.connection.RequestBuilder;
-import net.snowflake.ingest.connection.ServiceResponseHandler;
 import net.snowflake.ingest.utils.ErrorCode;
+import net.snowflake.ingest.utils.Logging;
 import net.snowflake.ingest.utils.SFException;
 import net.snowflake.ingest.utils.Utils;
-import org.apache.arrow.util.VisibleForTesting;
-import org.apache.http.client.HttpClient;
 
 /** Handles uploading files to the Snowflake Streaming Ingest Stage */
 class StreamingIngestStage {
   private static final ObjectMapper mapper = new ObjectMapper();
   private static final long REFRESH_THRESHOLD_IN_MS =
       TimeUnit.MILLISECONDS.convert(1, TimeUnit.MINUTES);
-  static final int MAX_RETRY_COUNT = 1;
+
+  private static final Logging logger = new Logging(StreamingIngestStage.class);
 
   /**
    * Wrapper class containing SnowflakeFileTransferMetadata and the timestamp at which the metadata
@@ -55,7 +58,7 @@ class StreamingIngestStage {
     private final boolean isLocalFS;
     private final String localLocation;
 
-    /* Do do not always know the age of the metadata, so we use the empty
+    /* Do not always know the age of the metadata, so we use the empty
     state to record unknown age.
      */
     Optional<Long> timestamp;
@@ -76,11 +79,13 @@ class StreamingIngestStage {
   }
 
   private SnowflakeFileTransferMetadataWithAge fileTransferMetadataWithAge;
-  private final HttpClient httpClient;
+  private final CloseableHttpClient httpClient;
   private final RequestBuilder requestBuilder;
   private final String role;
   private final String clientName;
   private String clientPrefix;
+
+  private final int maxUploadRetries;
 
   // Proxy parameters that we set while calling the Snowflake JDBC to upload the streams
   private final Properties proxyProperties;
@@ -88,15 +93,41 @@ class StreamingIngestStage {
   StreamingIngestStage(
       boolean isTestMode,
       String role,
-      HttpClient httpClient,
+      CloseableHttpClient httpClient,
       RequestBuilder requestBuilder,
-      String clientName)
+      String clientName,
+      int maxUploadRetries)
+      throws SnowflakeSQLException, IOException {
+    this(isTestMode, role, httpClient, requestBuilder, clientName, maxUploadRetries, null);
+  }
+
+  /**
+   * Constructor with proxy properties support
+   *
+   * @param isTestMode whether we're under test mode
+   * @param role Snowflake role used by the Client
+   * @param httpClient http client reference
+   * @param requestBuilder request builder to build the HTTP request
+   * @param clientName the client name
+   * @param maxUploadRetries maximum number of upload retries
+   * @param proxyProperties proxy properties for HTTP client configuration
+   */
+  StreamingIngestStage(
+      boolean isTestMode,
+      String role,
+      CloseableHttpClient httpClient,
+      RequestBuilder requestBuilder,
+      String clientName,
+      int maxUploadRetries,
+      Properties proxyProperties)
       throws SnowflakeSQLException, IOException {
     this.httpClient = httpClient;
     this.role = role;
     this.requestBuilder = requestBuilder;
     this.clientName = clientName;
-    this.proxyProperties = generateProxyPropertiesForJDBC();
+    this.proxyProperties =
+        proxyProperties != null ? proxyProperties : generateProxyPropertiesForJDBC();
+    this.maxUploadRetries = maxUploadRetries;
 
     if (!isTestMode) {
       refreshSnowflakeMetadata();
@@ -116,12 +147,13 @@ class StreamingIngestStage {
   StreamingIngestStage(
       boolean isTestMode,
       String role,
-      HttpClient httpClient,
+      CloseableHttpClient httpClient,
       RequestBuilder requestBuilder,
       String clientName,
-      SnowflakeFileTransferMetadataWithAge testMetadata)
+      SnowflakeFileTransferMetadataWithAge testMetadata,
+      int maxRetryCount)
       throws SnowflakeSQLException, IOException {
-    this(isTestMode, role, httpClient, requestBuilder, clientName);
+    this(isTestMode, role, httpClient, requestBuilder, clientName, maxRetryCount, null);
     if (!isTestMode) {
       throw new SFException(ErrorCode.INTERNAL_ERROR);
     }
@@ -142,8 +174,7 @@ class StreamingIngestStage {
   private void putRemote(String fullFilePath, byte[] data, int retryCount)
       throws SnowflakeSQLException, IOException {
     SnowflakeFileTransferMetadataV1 fileTransferMetadataCopy;
-    if (this.fileTransferMetadataWithAge.fileTransferMetadata.getStageInfo().getStageType()
-        == StageInfo.StageType.GCS) {
+    if (this.fileTransferMetadataWithAge.fileTransferMetadata.isForOneFile()) {
       fileTransferMetadataCopy = this.fetchSignedURL(fullFilePath);
     } else {
       // Set file path to be uploaded
@@ -182,20 +213,39 @@ class StreamingIngestStage {
               .setStreamingIngestClientKey(this.clientPrefix)
               .setStreamingIngestClientName(this.clientName)
               .setProxyProperties(this.proxyProperties)
+              .setDestFileName(fullFilePath)
               .build());
-    } catch (SnowflakeSQLException e) {
-      if (e.getErrorCode() != CLOUD_STORAGE_CREDENTIALS_EXPIRED || retryCount >= MAX_RETRY_COUNT) {
-        throw e;
-      }
-      this.refreshSnowflakeMetadata();
-      this.putRemote(fullFilePath, data, ++retryCount);
     } catch (Exception e) {
-      throw new SFException(e, ErrorCode.IO_ERROR);
+      if (retryCount == 0) {
+        // for the first exception, we always perform a metadata refresh.
+        logger.logInfo(
+            "Stage metadata need to be refreshed due to upload error: {} on first retry attempt",
+            e.getMessage());
+        this.refreshSnowflakeMetadata();
+      }
+      if (retryCount >= maxUploadRetries) {
+        logger.logError(
+            "Failed to upload to stage, retry attempts exhausted ({}), client={}, message={}",
+            maxUploadRetries,
+            clientName,
+            e.getMessage());
+        throw new SFException(e, ErrorCode.IO_ERROR);
+      }
+      retryCount++;
+      StreamingIngestUtils.sleepForRetry(retryCount);
+      logger.logInfo(
+          "Retrying upload, attempt {}/{} msg: {}, stackTrace:{}",
+          retryCount,
+          maxUploadRetries,
+          e.getMessage(),
+          getStackTrace(e));
+      this.putRemote(fullFilePath, data, retryCount);
     }
   }
 
   SnowflakeFileTransferMetadataWithAge refreshSnowflakeMetadata()
       throws SnowflakeSQLException, IOException {
+    logger.logInfo("Refresh Snowflake metadata, client={}", clientName);
     return refreshSnowflakeMetadata(false);
   }
 
@@ -225,7 +275,7 @@ class StreamingIngestStage {
     JsonNode responseNode = this.parseClientConfigureResponse(response);
     // Do not change the prefix everytime we have to refresh credentials
     if (Utils.isNullOrEmpty(this.clientPrefix)) {
-      this.clientPrefix = responseNode.get("prefix").textValue();
+      this.clientPrefix = createClientPrefix(responseNode);
     }
     Utils.assertStringNotNullOrEmpty("client prefix", this.clientPrefix);
 
@@ -259,6 +309,22 @@ class StreamingIngestStage {
   }
 
   /**
+   * Creates a client-specific prefix that will be also part of the files registered by this client.
+   * The prefix will include a server-side generated string and the GlobalID of the deployment the
+   * client is registering blobs to. The latter (deploymentId) is needed in order to guarantee that
+   * blob filenames are unique across deployments even with replication enabled.
+   *
+   * @param response the client/configure response from the server
+   * @return the client prefix.
+   */
+  private String createClientPrefix(final JsonNode response) {
+    final String prefix = response.get("prefix").textValue();
+    final String deploymentId =
+        response.has("deployment_id") ? "_" + response.get("deployment_id").longValue() : "";
+    return prefix + deploymentId;
+  }
+
+  /**
    * GCS requires a signed url per file. We need to fetch this from the server for each put
    *
    * @throws SnowflakeSQLException
@@ -282,6 +348,20 @@ class StreamingIngestStage {
     return metadata;
   }
 
+  private static class MapStatusGetter<T> implements Function<T, Long> {
+    public MapStatusGetter() {}
+
+    public Long apply(T input) {
+      try {
+        return ((Integer) ((Map<String, Object>) input).get("status_code")).longValue();
+      } catch (Exception e) {
+        throw new SFException(ErrorCode.INTERNAL_ERROR, "failed to get status_code from response");
+      }
+    }
+  }
+
+  private static final MapStatusGetter statusGetter = new MapStatusGetter();
+
   private JsonNode parseClientConfigureResponse(Map<String, Object> response) {
     JsonNode responseNode = mapper.valueToTree(response);
 
@@ -300,13 +380,17 @@ class StreamingIngestStage {
   private Map<String, Object> makeClientConfigureCall(Map<Object, Object> payload)
       throws IOException {
     try {
+
       Map<String, Object> response =
-          ServiceResponseHandler.unmarshallStreamingIngestResponse(
-              httpClient.execute(
-                  requestBuilder.generateStreamingIngestPostRequest(
-                      payload, CLIENT_CONFIGURE_ENDPOINT, "client configure")),
+          executeWithRetries(
               Map.class,
-              STREAMING_CLIENT_CONFIGURE);
+              CLIENT_CONFIGURE_ENDPOINT,
+              mapper.writeValueAsString(payload),
+              "client configure",
+              STREAMING_CLIENT_CONFIGURE,
+              httpClient,
+              requestBuilder,
+              statusGetter);
 
       // Check for Snowflake specific response code
       if (!response.get("status_code").equals((int) RESPONSE_SUCCESS)) {
@@ -315,7 +399,7 @@ class StreamingIngestStage {
       }
       return response;
     } catch (IngestResponseException e) {
-      throw new SFException(e, ErrorCode.CLIENT_CONFIGURE_FAILURE);
+      throw new SFException(e, ErrorCode.CLIENT_CONFIGURE_FAILURE, e.getMessage());
     }
   }
 
@@ -356,7 +440,6 @@ class StreamingIngestStage {
     InputStream input = new ByteArrayInputStream(data);
     try {
       String stageLocation = this.fileTransferMetadataWithAge.localLocation;
-      Paths.get(stageLocation, fullFilePath);
       File destFile = Paths.get(stageLocation, fullFilePath).toFile();
       FileUtils.copyInputStreamToFile(input, destFile);
     } catch (Exception ex) {

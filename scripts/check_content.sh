@@ -1,11 +1,40 @@
 #!/bin/bash -e
 
 # scripts used to check if all dependency is shaded into snowflake internal path
+# Do not add any additional exceptions into this script.
+# If this script fails the maven build, re-configure shading relocations in pom.xml.
 
 set -o pipefail
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
-if jar tvf $DIR/../target/snowflake-ingest-sdk.jar  | awk '{print $8}' | grep -v -E "^(net|com)/snowflake" | grep -v -E "(com|net)/\$" | grep -v -E "^META-INF" | grep -v -E "^mozilla" | grep -v mime.types | grep -v project.properties | grep -v -E "javax" | grep -v -E "^org/" | grep -v -E "^com/google" | grep -v -E "^com/sun" | grep -v "log4j.properties" | grep -v "git.properties" | grep -v "io/" | grep -v "codegen/" | grep -v "com/codahale/" | grep -v "com/ibm/" | grep -v "LICENSE"; then
-  echo "[ERROR] Ingest SDK jar includes class not under the snowflake namespace"
+
+if jar tvf $DIR/../target/snowflake-ingest-sdk.jar  | awk '{print $8}' | \
+    # Ignore directories
+    grep -v -E '/$' | \
+
+    # Snowflake top-level packages are allowed
+    grep -v -E "^net/snowflake/ingest" | \
+
+    # META-INF is allowed in the shaded JAR
+    grep -v -E "^META-INF" | \
+
+    # Files in the JAR root that are probably required
+    grep -v mime.types | \
+    grep -v project.properties | \
+    grep -v arrow-git.properties | \
+    grep -v core-default.xml | \
+    grep -v org.apache.hadoop.application-classloader.properties | \
+    grep -v common-version-info.properties | \
+    grep -v PropertyList-1.0.dtd | \
+    grep -v properties.dtd | \
+    grep -v parquet.thrift | \
+
+    # Native zstd libraries are allowed
+    grep -v -E '^darwin' | \
+    grep -v -E '^freebsd' | \
+    grep -v -E '^linux' | \
+    grep -v -E '^win' ; then
+
+  echo "[ERROR] JDBC jar includes class not under the snowflake namespace"
   exit 1
 fi

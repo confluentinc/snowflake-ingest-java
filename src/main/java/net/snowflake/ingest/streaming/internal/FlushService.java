@@ -5,27 +5,26 @@
 package net.snowflake.ingest.streaming.internal;
 
 import static net.snowflake.ingest.utils.Constants.BLOB_EXTENSION_TYPE;
-import static net.snowflake.ingest.utils.Constants.CPU_IO_TIME_RATIO;
 import static net.snowflake.ingest.utils.Constants.DISABLE_BACKGROUND_FLUSH;
 import static net.snowflake.ingest.utils.Constants.MAX_BLOB_SIZE_IN_BYTES;
 import static net.snowflake.ingest.utils.Constants.MAX_THREAD_COUNT;
 import static net.snowflake.ingest.utils.Constants.THREAD_SHUTDOWN_TIMEOUT_IN_SEC;
+import static net.snowflake.ingest.utils.Utils.getStackTrace;
 
 import com.codahale.metrics.Timer;
-import java.io.ByteArrayOutputStream;
+import com.google.common.annotations.VisibleForTesting;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Calendar;
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TimeZone;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -33,27 +32,20 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.zip.CRC32;
 import javax.crypto.BadPaddingException;
 import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.NoSuchPaddingException;
 import net.snowflake.client.jdbc.SnowflakeSQLException;
 import net.snowflake.client.jdbc.internal.google.common.util.concurrent.ThreadFactoryBuilder;
 import net.snowflake.ingest.utils.Constants;
-import net.snowflake.ingest.utils.Cryptor;
 import net.snowflake.ingest.utils.ErrorCode;
 import net.snowflake.ingest.utils.Logging;
 import net.snowflake.ingest.utils.Pair;
 import net.snowflake.ingest.utils.SFException;
 import net.snowflake.ingest.utils.Utils;
-import org.apache.arrow.util.VisibleForTesting;
-import org.apache.arrow.vector.VectorLoader;
-import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.VectorUnloader;
-import org.apache.arrow.vector.ipc.ArrowStreamWriter;
-import org.apache.arrow.vector.ipc.message.ArrowRecordBatch;
 
 /**
  * Responsible for flushing data from client to Snowflake tables. When a flush is triggered, it will
@@ -62,25 +54,30 @@ import org.apache.arrow.vector.ipc.message.ArrowRecordBatch;
  * <li>build the blob using the ChannelData returned from previous step
  * <li>upload the blob to stage
  * <li>register the blob to the targeted Snowflake table
+ *
+ * @param <T> type of column data ({@link ParquetChunkData})
  */
-class FlushService {
+class FlushService<T> {
+
+  // The max number of upload retry attempts to the stage
+  private static final int DEFAULT_MAX_UPLOAD_RETRIES = 5;
 
   // Static class to save the list of channels that are used to build a blob, which is mainly used
   // to invalidate all the channels when there is a failure
-  static class BlobData {
-    private final String filePath;
-    private final List<List<ChannelData>> data;
+  static class BlobData<T> {
+    private final String path;
+    private final List<List<ChannelData<T>>> data;
 
-    BlobData(String filePath, List<List<ChannelData>> data) {
-      this.filePath = filePath;
+    BlobData(String path, List<List<ChannelData<T>>> data) {
+      this.path = path;
       this.data = data;
     }
 
-    String getFilePath() {
-      return filePath;
+    String getPath() {
+      return path;
     }
 
-    List<List<ChannelData>> getData() {
+    List<List<ChannelData<T>>> getData() {
       return data;
     }
   }
@@ -91,7 +88,7 @@ class FlushService {
   private final AtomicLong counter;
 
   // The client that owns this flush service
-  private final SnowflakeStreamingIngestClientInternal owningClient;
+  private final SnowflakeStreamingIngestClientInternal<T> owningClient;
 
   // Thread to schedule the flush job
   @VisibleForTesting ScheduledExecutorService flushWorker;
@@ -103,13 +100,13 @@ class FlushService {
   @VisibleForTesting ExecutorService buildUploadWorkers;
 
   // Reference to the channel cache
-  private final ChannelCache channelCache;
+  private final ChannelCache<T> channelCache;
 
   // Reference to the Streaming Ingest stage
   private final StreamingIngestStage targetStage;
 
   // Reference to register service
-  private final RegisterService registerService;
+  private final RegisterService<T> registerService;
 
   // Indicates whether we need to schedule a flush
   @VisibleForTesting volatile boolean isNeedFlush;
@@ -123,6 +120,9 @@ class FlushService {
   // A map which stores the timer for each blob in order to capture the flush latency
   private final Map<String, Timer.Context> latencyTimerContextMap;
 
+  // blob encoding version
+  private final Constants.BdecVersion bdecVersion;
+
   /**
    * Constructor for TESTING that takes (usually mocked) StreamingIngestStage
    *
@@ -131,19 +131,20 @@ class FlushService {
    * @param isTestMode
    */
   FlushService(
-      SnowflakeStreamingIngestClientInternal client,
-      ChannelCache cache,
+      SnowflakeStreamingIngestClientInternal<T> client,
+      ChannelCache<T> cache,
       StreamingIngestStage targetStage, // For testing
       boolean isTestMode) {
     this.owningClient = client;
     this.channelCache = cache;
     this.targetStage = targetStage;
     this.counter = new AtomicLong(0);
-    this.registerService = new RegisterService(client, isTestMode);
+    this.registerService = new RegisterService<>(client, isTestMode);
     this.isNeedFlush = false;
     this.lastFlushTime = System.currentTimeMillis();
     this.isTestMode = isTestMode;
-    this.latencyTimerContextMap = new HashMap<>();
+    this.latencyTimerContextMap = new ConcurrentHashMap<>();
+    this.bdecVersion = this.owningClient.getParameterProvider().getBlobFormatVersion();
     createWorkers();
   }
 
@@ -155,7 +156,7 @@ class FlushService {
    * @param isTestMode
    */
   FlushService(
-      SnowflakeStreamingIngestClientInternal client, ChannelCache cache, boolean isTestMode) {
+      SnowflakeStreamingIngestClientInternal<T> client, ChannelCache<T> cache, boolean isTestMode) {
     this.owningClient = client;
     this.channelCache = cache;
     try {
@@ -165,17 +166,20 @@ class FlushService {
               client.getRole(),
               client.getHttpClient(),
               client.getRequestBuilder(),
-              client.getName());
+              client.getName(),
+              DEFAULT_MAX_UPLOAD_RETRIES,
+              client.getProxyProperties());
     } catch (SnowflakeSQLException | IOException err) {
       throw new SFException(err, ErrorCode.UNABLE_TO_CONNECT_TO_STAGE);
     }
 
-    this.registerService = new RegisterService(client, isTestMode);
+    this.registerService = new RegisterService<>(client, isTestMode);
     this.counter = new AtomicLong(0);
     this.isNeedFlush = false;
     this.lastFlushTime = System.currentTimeMillis();
     this.isTestMode = isTestMode;
-    this.latencyTimerContextMap = new HashMap<>();
+    this.latencyTimerContextMap = new ConcurrentHashMap<>();
+    this.bdecVersion = this.owningClient.getParameterProvider().getBlobFormatVersion();
     createWorkers();
   }
 
@@ -256,12 +260,13 @@ class FlushService {
    */
   CompletableFuture<Void> flush(boolean isForce) {
     long timeDiffMillis = System.currentTimeMillis() - this.lastFlushTime;
+
     if (isForce
         || (!DISABLE_BACKGROUND_FLUSH
-            && !this.isTestMode
+            && !isTestMode()
             && (this.isNeedFlush
                 || timeDiffMillis
-                    >= this.owningClient.getParameterProvider().getBufferFlushIntervalInMs()))) {
+                    >= this.owningClient.getParameterProvider().getCachedMaxClientLagInMs()))) {
 
       return this.statsFuture()
           .thenCompose((v) -> this.distributeFlush(isForce, timeDiffMillis))
@@ -278,7 +283,25 @@ class FlushService {
     this.flushWorker = Executors.newSingleThreadScheduledExecutor(flushThreadFactory);
     this.flushWorker.scheduleWithFixedDelay(
         () -> {
-          flush(false);
+          flush(false)
+              .exceptionally(
+                  e -> {
+                    String errorMessage =
+                        String.format(
+                            "Background flush task failed, client=%s, exception=%s, detail=%s,"
+                                + " trace=%s.",
+                            this.owningClient.getName(),
+                            e.getCause(),
+                            e.getCause().getMessage(),
+                            getStackTrace(e.getCause()));
+                    logger.logError(errorMessage);
+                    if (this.owningClient.getTelemetryService() != null) {
+                      this.owningClient
+                          .getTelemetryService()
+                          .reportClientFailure(this.getClass().getSimpleName(), errorMessage);
+                    }
+                    return null;
+                  });
         },
         0,
         this.owningClient.getParameterProvider().getBufferFlushCheckIntervalInMs(),
@@ -290,13 +313,14 @@ class FlushService {
     this.registerWorker = Executors.newSingleThreadExecutor(registerThreadFactory);
 
     // Create threads for building and uploading blobs
-    // Size: number of available processors * (1 + IO time/CPU time), currently the
-    // CPU_IO_TIME_RATIO is 1 under the assumption that build and upload will take similar time
+    // Size: number of available processors * (1 + IO time/CPU time)
     ThreadFactory buildUploadThreadFactory =
         new ThreadFactoryBuilder().setNameFormat("ingest-build-upload-thread-%d").build();
     int buildUploadThreadCount =
         Math.min(
-            Runtime.getRuntime().availableProcessors() * (1 + CPU_IO_TIME_RATIO), MAX_THREAD_COUNT);
+            Runtime.getRuntime().availableProcessors()
+                * (1 + this.owningClient.getParameterProvider().getIOTimeCpuRatio()),
+            MAX_THREAD_COUNT);
     this.buildUploadWorkers =
         Executors.newFixedThreadPool(buildUploadThreadCount, buildUploadThreadFactory);
 
@@ -312,69 +336,156 @@ class FlushService {
    * off a build blob work when certain size has reached or we have reached the end
    */
   void distributeFlushTasks() {
-    Iterator<Map.Entry<String, ConcurrentHashMap<String, SnowflakeStreamingIngestChannelInternal>>>
+    Iterator<
+            Map.Entry<
+                String, ConcurrentHashMap<String, SnowflakeStreamingIngestChannelInternal<T>>>>
         itr = this.channelCache.iterator();
-    List<Pair<BlobData, CompletableFuture<BlobMetadata>>> blobs = new ArrayList<>();
+    List<Pair<BlobData<T>, CompletableFuture<BlobMetadata>>> blobs = new ArrayList<>();
+    List<ChannelData<T>> leftoverChannelsDataPerTable = new ArrayList<>();
 
-    while (itr.hasNext()) {
-      List<List<ChannelData>> blobData = new ArrayList<>();
-      float totalBufferSize = 0;
+    while (itr.hasNext() || !leftoverChannelsDataPerTable.isEmpty()) {
+      List<List<ChannelData<T>>> blobData = new ArrayList<>();
+      float totalBufferSizeInBytes = 0F;
+      final String blobPath = getBlobPath(this.targetStage.getClientPrefix());
 
-      // Distribute work at table level, create a new blob if reaching the blob size limit
-      while (itr.hasNext() && totalBufferSize <= MAX_BLOB_SIZE_IN_BYTES) {
-        ConcurrentHashMap<String, SnowflakeStreamingIngestChannelInternal> table =
-            itr.next().getValue();
-        List<ChannelData> channelsDataPerTable = new ArrayList<>();
-        // TODO: we could do parallel stream to get the channelData if needed
-        for (SnowflakeStreamingIngestChannelInternal channel : table.values()) {
-          if (channel.isValid()) {
-            ChannelData data = channel.getData();
-            if (data != null) {
-              channelsDataPerTable.add(data);
-              totalBufferSize += data.getBufferSize();
-            }
-          }
+      // Distribute work at table level, split the blob if reaching the blob size limit or the
+      // channel has different encryption key ids
+      while (itr.hasNext() || !leftoverChannelsDataPerTable.isEmpty()) {
+        List<ChannelData<T>> channelsDataPerTable = Collections.synchronizedList(new ArrayList<>());
+        if (!leftoverChannelsDataPerTable.isEmpty()) {
+          channelsDataPerTable.addAll(leftoverChannelsDataPerTable);
+          leftoverChannelsDataPerTable.clear();
+        } else if (blobData.size()
+            >= this.owningClient
+                .getParameterProvider()
+                .getMaxChunksInBlobAndRegistrationRequest()) {
+          // Create a new blob if the current one already contains max allowed number of chunks
+          logger.logInfo(
+              "Max allowed number of chunks in the current blob reached. chunkCount={}"
+                  + " maxChunkCount={} currentBlobPath={}",
+              blobData.size(),
+              this.owningClient.getParameterProvider().getMaxChunksInBlobAndRegistrationRequest(),
+              blobPath);
+          break;
+        } else {
+          ConcurrentHashMap<String, SnowflakeStreamingIngestChannelInternal<T>> table =
+              itr.next().getValue();
+          // Use parallel stream since getData could be the performance bottleneck when we have a
+          // high number of channels
+          table.values().parallelStream()
+              .forEach(
+                  channel -> {
+                    if (channel.isValid()) {
+                      ChannelData<T> data = channel.getData(blobPath);
+                      if (data != null) {
+                        channelsDataPerTable.add(data);
+                      }
+                    }
+                  });
         }
+
         if (!channelsDataPerTable.isEmpty()) {
-          blobData.add(channelsDataPerTable);
+          int idx = 0;
+          float totalBufferSizePerTableInBytes = 0F;
+          while (idx < channelsDataPerTable.size()) {
+            ChannelData<T> channelData = channelsDataPerTable.get(idx);
+            // Stop processing the rest of channels when needed
+            if (idx > 0
+                && shouldStopProcessing(
+                    totalBufferSizeInBytes,
+                    totalBufferSizePerTableInBytes,
+                    channelData,
+                    channelsDataPerTable.get(idx - 1))) {
+              leftoverChannelsDataPerTable.addAll(
+                  channelsDataPerTable.subList(idx, channelsDataPerTable.size()));
+              logger.logInfo(
+                  "Creation of another blob is needed because of blob/chunk size limit or"
+                      + " different encryption ids or different schema, client={}, table={},"
+                      + " blobSize={}, chunkSize={}, nextChannelSize={}, encryptionId1={},"
+                      + " encryptionId2={}, schema1={}, schema2={}",
+                  this.owningClient.getName(),
+                  channelData.getChannelContext().getTableName(),
+                  totalBufferSizeInBytes,
+                  totalBufferSizePerTableInBytes,
+                  channelData.getBufferSize(),
+                  channelData.getChannelContext().getEncryptionKeyId(),
+                  channelsDataPerTable.get(idx - 1).getChannelContext().getEncryptionKeyId(),
+                  channelData.getColumnEps().keySet(),
+                  channelsDataPerTable.get(idx - 1).getColumnEps().keySet());
+              break;
+            }
+            totalBufferSizeInBytes += channelData.getBufferSize();
+            totalBufferSizePerTableInBytes += channelData.getBufferSize();
+            idx++;
+          }
+          // Add processed channels to the current blob, stop if we need to create a new blob
+          blobData.add(channelsDataPerTable.subList(0, idx));
+          if (idx != channelsDataPerTable.size()) {
+            break;
+          }
         }
       }
 
       // Kick off a build job
-      if (!blobData.isEmpty()) {
-        String filePath = getFilePath(this.targetStage.getClientPrefix());
+      if (blobData.isEmpty()) {
+        // we decrement the counter so that we do not have gaps in the blob names created by this
+        // client. See method getBlobPath() below.
+        this.counter.decrementAndGet();
+      } else {
+        long flushStartMs = System.currentTimeMillis();
         if (this.owningClient.flushLatency != null) {
-          latencyTimerContextMap.putIfAbsent(filePath, this.owningClient.flushLatency.time());
+          latencyTimerContextMap.putIfAbsent(blobPath, this.owningClient.flushLatency.time());
         }
         blobs.add(
             new Pair<>(
-                new BlobData(filePath, blobData),
+                new BlobData<>(blobPath, blobData),
                 CompletableFuture.supplyAsync(
                     () -> {
                       try {
-                        logger.logDebug(
-                            "buildUploadWorkers stats={}", this.buildUploadWorkers.toString());
-                        return buildAndUpload(filePath, blobData);
-                      } catch (IOException e) {
-                        logger.logError(
-                            "Building blob failed={}, exception={}, detail={}, all channels in the"
-                                + " blob will be invalidated",
-                            filePath,
-                            e,
-                            e.getMessage());
-                        invalidateAllChannelsInBlob(blobData);
-                        return null;
-                      } catch (NoSuchAlgorithmException e) {
-                        throw new SFException(e, ErrorCode.MD5_HASHING_NOT_AVAILABLE);
-                      } catch (InvalidAlgorithmParameterException
-                          | NoSuchPaddingException
-                          | IllegalBlockSizeException
-                          | BadPaddingException
-                          | InvalidKeyException e) {
-                        throw new SFException(e, ErrorCode.ENCRYPTION_FAILURE);
+                        BlobMetadata blobMetadata = buildAndUpload(blobPath, blobData);
+                        blobMetadata.getBlobStats().setFlushStartMs(flushStartMs);
+                        return blobMetadata;
+                      } catch (Throwable e) {
+                        Throwable ex = e.getCause() == null ? e : e.getCause();
+                        String errorMessage =
+                            String.format(
+                                "Building blob failed, client=%s, blob=%s, exception=%s,"
+                                    + " detail=%s, trace=%s, all channels in the blob will be"
+                                    + " invalidated",
+                                this.owningClient.getName(),
+                                blobPath,
+                                ex,
+                                ex.getMessage(),
+                                getStackTrace(ex));
+                        logger.logError(errorMessage);
+                        if (this.owningClient.getTelemetryService() != null) {
+                          this.owningClient
+                              .getTelemetryService()
+                              .reportClientFailure(this.getClass().getSimpleName(), errorMessage);
+                        }
+
+                        if (e instanceof IOException) {
+                          invalidateAllChannelsInBlob(blobData);
+                          return null;
+                        } else if (e instanceof NoSuchAlgorithmException) {
+                          throw new SFException(e, ErrorCode.MD5_HASHING_NOT_AVAILABLE);
+                        } else if (e instanceof InvalidAlgorithmParameterException
+                            | e instanceof NoSuchPaddingException
+                            | e instanceof IllegalBlockSizeException
+                            | e instanceof BadPaddingException
+                            | e instanceof InvalidKeyException) {
+                          throw new SFException(e, ErrorCode.ENCRYPTION_FAILURE);
+                        } else {
+                          throw new SFException(e, ErrorCode.INTERNAL_ERROR, e.getMessage());
+                        }
                       }
                     },
                     this.buildUploadWorkers)));
+        logger.logInfo(
+            "buildAndUpload task added for client={}, blob={}, buildUploadWorkers stats={}",
+            this.owningClient.getName(),
+            blobPath,
+            this.buildUploadWorkers.toString());
       }
     }
 
@@ -383,195 +494,94 @@ class FlushService {
   }
 
   /**
-   * Builds and uploads file to cloud storage.
+   * Check whether we should stop merging more channels into the same chunk, we need to stop in a
+   * few cases:
    *
-   * @param filePath Path of the destination file in cloud storage
+   * <p>When the blob size is larger than a certain threshold
+   *
+   * <p>When the chunk size is larger than a certain threshold
+   *
+   * <p>When the encryption key ids are not the same
+   *
+   * <p>When the schemas are not the same
+   */
+  private boolean shouldStopProcessing(
+      float totalBufferSizeInBytes,
+      float totalBufferSizePerTableInBytes,
+      ChannelData<T> current,
+      ChannelData<T> prev) {
+    return totalBufferSizeInBytes + current.getBufferSize() > MAX_BLOB_SIZE_IN_BYTES
+        || totalBufferSizePerTableInBytes + current.getBufferSize()
+            > this.owningClient.getParameterProvider().getMaxChunkSizeInBytes()
+        || !Objects.equals(
+            current.getChannelContext().getEncryptionKeyId(),
+            prev.getChannelContext().getEncryptionKeyId())
+        || !current.getColumnEps().keySet().equals(prev.getColumnEps().keySet());
+  }
+
+  /**
+   * Builds and uploads blob to cloud storage.
+   *
+   * @param blobPath Path of the destination blob in cloud storage
    * @param blobData All the data for one blob. Assumes that all ChannelData in the inner List
    *     belongs to the same table. Will error if this is not the case
    * @return BlobMetadata for FlushService.upload
    */
-  BlobMetadata buildAndUpload(String filePath, List<List<ChannelData>> blobData)
+  BlobMetadata buildAndUpload(String blobPath, List<List<ChannelData<T>>> blobData)
       throws IOException, NoSuchAlgorithmException, InvalidAlgorithmParameterException,
           NoSuchPaddingException, IllegalBlockSizeException, BadPaddingException,
           InvalidKeyException {
-    List<ChunkMetadata> chunksMetadataList = new ArrayList<>();
-    List<byte[]> chunksDataList = new ArrayList<>();
-    long curDataSize = 0L;
-    CRC32 crc = new CRC32();
     Timer.Context buildContext = Utils.createTimerContext(this.owningClient.buildLatency);
 
-    // TODO: channels with different schema can't be combined even if they belongs to same table
-    for (List<ChannelData> channelsDataPerTable : blobData) {
-      List<ChannelMetadata> channelsMetadataList = new ArrayList<>();
-      long rowCount = 0L;
-      VectorSchemaRoot root = null;
-      ArrowStreamWriter streamWriter = null;
-      VectorLoader loader = null;
-      SnowflakeStreamingIngestChannelInternal firstChannel = null;
-      ByteArrayOutputStream chunkData = new ByteArrayOutputStream();
-      Map<String, RowBufferStats> columnEpStatsMapCombined = null;
+    // Construct the blob along with the metadata of the blob
+    BlobBuilder.Blob blob = BlobBuilder.constructBlobAndMetadata(blobPath, blobData, bdecVersion);
 
-      try {
-        for (ChannelData data : channelsDataPerTable) {
-          // Create channel metadata
-          ChannelMetadata channelMetadata =
-              ChannelMetadata.builder()
-                  .setOwningChannel(data.getChannel())
-                  .setRowSequencer(data.getRowSequencer())
-                  .setOffsetToken(data.getOffsetToken())
-                  .build();
-          // Add channel metadata to the metadata list
-          channelsMetadataList.add(channelMetadata);
+    blob.blobStats.setBuildDurationMs(buildContext);
 
-          logger.logDebug(
-              "Start building channel={}, rowCount={}, bufferSize={} in blob={}",
-              data.getChannel().getFullyQualifiedName(),
-              data.getRowCount(),
-              data.getBufferSize(),
-              filePath);
-
-          if (root == null) {
-            columnEpStatsMapCombined = data.getColumnEps();
-            root = data.getVectors();
-            streamWriter = new ArrowStreamWriter(root, null, chunkData);
-            loader = new VectorLoader(root);
-            firstChannel = data.getChannel();
-            streamWriter.start();
-          } else {
-            // This method assumes that channelsDataPerTable is grouped by table. We double check
-            // here and throw an error if the assumption is violated
-            if (!data.getChannel()
-                .getFullyQualifiedTableName()
-                .equals(firstChannel.getFullyQualifiedTableName())) {
-              throw new SFException(ErrorCode.INVALID_DATA_IN_CHUNK);
-            }
-
-            columnEpStatsMapCombined =
-                ChannelData.getCombinedColumnStatsMap(
-                    columnEpStatsMapCombined, data.getColumnEps());
-
-            VectorUnloader unloader = new VectorUnloader(data.getVectors());
-            ArrowRecordBatch recordBatch = unloader.getRecordBatch();
-            loader.load(recordBatch);
-            recordBatch.close();
-            data.getVectors().close();
-          }
-
-          // Write channel data using the stream writer
-          streamWriter.writeBatch();
-          rowCount += data.getRowCount();
-
-          logger.logDebug(
-              "Finish building channel={}, rowCount={}, bufferSize={} in blob={}",
-              data.getChannel().getFullyQualifiedName(),
-              data.getRowCount(),
-              data.getBufferSize(),
-              filePath);
-        }
-      } finally {
-        if (streamWriter != null) {
-          streamWriter.close();
-          root.close();
-        }
-      }
-
-      if (!channelsMetadataList.isEmpty()) {
-        // Compress the chunk data
-        byte[] compressedChunkData = BlobBuilder.compress(filePath, chunkData);
-
-        // Encrypt the compressed chunk data, the encryption key is derived using the key from
-        // server with the full blob path.
-        // We need to maintain IV as a block counter for the whole file, even interleaved,
-        // to align with decryption on the Snowflake query path.
-        // TODO: address alignment for the header SNOW-557866
-        long iv = curDataSize / Constants.ENCRYPTION_ALGORITHM_BLOCK_SIZE_BYTES;
-        byte[] encryptedCompressedChunkData =
-            Cryptor.encrypt(compressedChunkData, firstChannel.getEncryptionKey(), filePath, iv);
-
-        // Encryption adds padding to the ENCRYPTION_ALGORITHM_BLOCK_SIZE_BYTES
-        // to align with decryption on the Snowflake query path starting from this chunk offset.
-        // The padding does not have arrow data and not compressed.
-        // Hence, the actual chunk size is smaller by the padding size.
-        // The compression on the Snowflake query path needs the correct size of the compressed
-        // data.
-        int compressedChunkLength = compressedChunkData.length;
-
-        // Compute the md5 of the chunk data
-        String md5 = BlobBuilder.computeMD5(encryptedCompressedChunkData, compressedChunkLength);
-        int encryptedCompressedChunkDataSize = encryptedCompressedChunkData.length;
-
-        // Create chunk metadata
-        ChunkMetadata chunkMetadata =
-            ChunkMetadata.builder()
-                .setOwningTable(firstChannel)
-                // The start offset will be updated later in BlobBuilder#build to include the blob
-                // header
-                .setChunkStartOffset(curDataSize)
-                // The compressedChunkLength is used because it is the actual data size used for
-                // decompression and md5 calculation on server side.
-                .setChunkLength(compressedChunkLength)
-                .setChannelList(channelsMetadataList)
-                .setChunkMD5(md5)
-                .setEncryptionKeyId(firstChannel.getEncryptionKeyId())
-                .setEpInfo(ArrowRowBuffer.buildEpInfoFromStats(rowCount, columnEpStatsMapCombined))
-                .build();
-
-        // Add chunk metadata and data to the list
-        chunksMetadataList.add(chunkMetadata);
-        chunksDataList.add(encryptedCompressedChunkData);
-        curDataSize += encryptedCompressedChunkDataSize;
-        crc.update(encryptedCompressedChunkData, 0, encryptedCompressedChunkDataSize);
-
-        logger.logDebug(
-            "Finish building chunk in blob={}, table={}, rowCount={}, uncompressedSize={},"
-                + " compressedChunkLength={}, encryptedCompressedSize={}",
-            filePath,
-            firstChannel.getFullyQualifiedTableName(),
-            rowCount,
-            chunkData.size(),
-            compressedChunkLength,
-            encryptedCompressedChunkDataSize,
-            compressedChunkLength);
-      }
-    }
-
-    // Build blob file, and then upload to streaming ingest dedicated stage
-    byte[] blob =
-        BlobBuilder.build(chunksMetadataList, chunksDataList, crc.getValue(), curDataSize);
-    if (buildContext != null) {
-      buildContext.stop();
-    }
-
-    return upload(filePath, blob, chunksMetadataList);
+    return upload(blobPath, blob.blobBytes, blob.chunksMetadataList, blob.blobStats);
   }
 
   /**
    * Upload a blob to Streaming Ingest dedicated stage
    *
-   * @param filePath full path of the blob file
+   * @param blobPath full path of the blob
    * @param blob blob data
    * @param metadata a list of chunk metadata
+   * @param blobStats an object to track latencies and other stats of the blob
    * @return BlobMetadata object used to create the register blob request
    */
-  BlobMetadata upload(String filePath, byte[] blob, List<ChunkMetadata> metadata)
+  BlobMetadata upload(
+      String blobPath, byte[] blob, List<ChunkMetadata> metadata, BlobStats blobStats)
       throws NoSuchAlgorithmException {
-    logger.logDebug("Start uploading file={}, size={}", filePath, blob.length);
+    logger.logInfo("Start uploading blob={}, size={}", blobPath, blob.length);
+    long startTime = System.currentTimeMillis();
 
     Timer.Context uploadContext = Utils.createTimerContext(this.owningClient.uploadLatency);
-
-    this.targetStage.put(filePath, blob);
+    this.targetStage.put(blobPath, blob);
 
     if (uploadContext != null) {
-      uploadContext.stop();
+      blobStats.setUploadDurationMs(uploadContext);
       this.owningClient.uploadThroughput.mark(blob.length);
       this.owningClient.blobSizeHistogram.update(blob.length);
       this.owningClient.blobRowCountHistogram.update(
           metadata.stream().mapToLong(i -> i.getEpInfo().getRowCount()).sum());
     }
 
-    logger.logDebug("Finish uploading file={}", filePath);
+    logger.logInfo(
+        "Finish uploading blob={}, size={}, timeInMillis={}",
+        blobPath,
+        blob.length,
+        System.currentTimeMillis() - startTime);
 
-    return new BlobMetadata(filePath, BlobBuilder.computeMD5(blob), metadata);
+    // at this point we know for sure if the BDEC file has data for more than one chunk, i.e.
+    // spans mixed tables or not
+    return BlobMetadata.createBlobMetadata(
+        blobPath,
+        BlobBuilder.computeMD5(blob),
+        bdecVersion,
+        metadata,
+        blobStats,
+        metadata == null ? false : metadata.size() > 1);
   }
 
   /**
@@ -605,18 +615,18 @@ class FlushService {
   }
 
   /**
-   * Generate a blob file path, which is: "YEAR/MONTH/DAY_OF_MONTH/HOUR_OF_DAY/MINUTE/<current utc
+   * Generate a blob path, which is: "YEAR/MONTH/DAY_OF_MONTH/HOUR_OF_DAY/MINUTE/<current utc
    * timestamp + client unique prefix + thread id + counter>.BDEC"
    *
    * @return the generated blob file path
    */
-  private String getFilePath(String clientPrefix) {
+  private String getBlobPath(String clientPrefix) {
     Calendar calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
-    return getFilePath(calendar, clientPrefix);
+    return getBlobPath(calendar, clientPrefix);
   }
 
   /** For TESTING */
-  String getFilePath(Calendar calendar, String clientPrefix) {
+  String getBlobPath(Calendar calendar, String clientPrefix) {
     if (isTestMode && clientPrefix == null) {
       clientPrefix = "testPrefix";
     }
@@ -627,9 +637,10 @@ class FlushService {
     int day = calendar.get(Calendar.DAY_OF_MONTH);
     int hour = calendar.get(Calendar.HOUR_OF_DAY);
     int minute = calendar.get(Calendar.MINUTE);
-    long time = calendar.getTimeInMillis();
+    long time = TimeUnit.MILLISECONDS.toSeconds(calendar.getTimeInMillis());
     long threadId = Thread.currentThread().getId();
-    String fileName =
+    // Create the blob short name, the clientPrefix contains the deployment id
+    String blobShortName =
         Long.toString(time, 36)
             + "_"
             + clientPrefix
@@ -639,15 +650,7 @@ class FlushService {
             + this.counter.getAndIncrement()
             + "."
             + BLOB_EXTENSION_TYPE;
-    Path filePath =
-        Paths.get(
-            Integer.toString(year),
-            Integer.toString(month),
-            Integer.toString(day),
-            Integer.toString(hour),
-            Integer.toString(minute),
-            fileName);
-    return filePath.toString();
+    return year + "/" + month + "/" + day + "/" + hour + "/" + minute + "/" + blobShortName;
   }
 
   /**
@@ -655,25 +658,47 @@ class FlushService {
    *
    * @param blobData list of channels that belongs to the blob
    */
-  void invalidateAllChannelsInBlob(List<List<ChannelData>> blobData) {
+  <CD> void invalidateAllChannelsInBlob(List<List<ChannelData<CD>>> blobData) {
     blobData.forEach(
         chunkData ->
             chunkData.forEach(
                 channelData -> {
-                  channelData.getVectors().close();
                   this.owningClient
                       .getChannelCache()
                       .invalidateChannelIfSequencersMatch(
-                          channelData.getChannel().getDBName(),
-                          channelData.getChannel().getSchemaName(),
-                          channelData.getChannel().getTableName(),
-                          channelData.getChannel().getName(),
-                          channelData.getChannel().getChannelSequencer());
+                          channelData.getChannelContext().getDbName(),
+                          channelData.getChannelContext().getSchemaName(),
+                          channelData.getChannelContext().getTableName(),
+                          channelData.getChannelContext().getName(),
+                          channelData.getChannelContext().getChannelSequencer());
                 }));
   }
 
   /** Get the server generated unique prefix for this client */
   String getClientPrefix() {
     return this.targetStage.getClientPrefix();
+  }
+
+  /**
+   * Throttle if the number of queued buildAndUpload tasks is bigger than the total number of
+   * available processors
+   */
+  boolean throttleDueToQueuedFlushTasks() {
+    ThreadPoolExecutor buildAndUpload = (ThreadPoolExecutor) this.buildUploadWorkers;
+    boolean throttleOnQueuedTasks =
+        buildAndUpload.getQueue().size() > Runtime.getRuntime().availableProcessors();
+    if (throttleOnQueuedTasks) {
+      logger.logWarn(
+          "Throttled due too many queue flush tasks (probably because of slow uploading speed),"
+              + " client={}, buildUploadWorkers stats={}",
+          this.owningClient.getName(),
+          this.buildUploadWorkers.toString());
+    }
+    return throttleOnQueuedTasks;
+  }
+
+  /** Get whether we're running under test mode */
+  boolean isTestMode() {
+    return this.isTestMode;
   }
 }

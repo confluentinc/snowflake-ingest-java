@@ -4,11 +4,14 @@ import static net.snowflake.ingest.utils.Constants.BLOB_CHECKSUM_SIZE_IN_BYTES;
 import static net.snowflake.ingest.utils.Constants.BLOB_CHUNK_METADATA_LENGTH_SIZE_IN_BYTES;
 import static net.snowflake.ingest.utils.Constants.BLOB_EXTENSION_TYPE;
 import static net.snowflake.ingest.utils.Constants.BLOB_FILE_SIZE_SIZE_IN_BYTES;
-import static net.snowflake.ingest.utils.Constants.BLOB_FORMAT_VERSION;
 import static net.snowflake.ingest.utils.Constants.BLOB_NO_HEADER;
 import static net.snowflake.ingest.utils.Constants.BLOB_TAG_SIZE_IN_BYTES;
 import static net.snowflake.ingest.utils.Constants.BLOB_VERSION_SIZE_IN_BYTES;
+import static net.snowflake.ingest.utils.ParameterProvider.MAX_CHUNK_SIZE_IN_BYTES_DEFAULT;
 
+import com.codahale.metrics.Histogram;
+import com.codahale.metrics.Meter;
+import com.codahale.metrics.Timer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
@@ -20,116 +23,376 @@ import java.nio.file.Paths;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TimeZone;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import javax.crypto.BadPaddingException;
 import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.NoSuchPaddingException;
-import net.snowflake.client.jdbc.SnowflakeConnectionV1;
-import net.snowflake.client.jdbc.internal.org.bouncycastle.jce.provider.BouncyCastleProvider;
 import net.snowflake.ingest.streaming.OpenChannelRequest;
+import net.snowflake.ingest.utils.Constants;
 import net.snowflake.ingest.utils.Cryptor;
 import net.snowflake.ingest.utils.ErrorCode;
 import net.snowflake.ingest.utils.ParameterProvider;
 import net.snowflake.ingest.utils.SFException;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.FieldVector;
-import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.VarCharVector;
-import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.util.Text;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 
 public class FlushServiceTest {
-  private SnowflakeStreamingIngestClientInternal client;
-  private ChannelCache channelCache;
-  private SnowflakeConnectionV1 conn;
-  private SnowflakeStreamingIngestChannelInternal channel1;
-  private SnowflakeStreamingIngestChannelInternal channel2;
-  private SnowflakeStreamingIngestChannelInternal channel3;
-  private StreamingIngestStage stage;
+  public FlushServiceTest() {
+    this.testContextFactory = ParquetTestContext.createFactory();
+  }
 
-  private final BufferAllocator allocator = new RootAllocator();
+  private abstract static class TestContextFactory<T> {
+    private final String name;
 
-  @Before
-  public void setup() {
-    java.security.Security.addProvider(new BouncyCastleProvider());
+    TestContextFactory(String name) {
+      this.name = name;
+    }
 
-    ParameterProvider parameterProvider = new ParameterProvider();
-    client = Mockito.mock(SnowflakeStreamingIngestClientInternal.class);
-    Mockito.when(client.getParameterProvider()).thenReturn(parameterProvider);
-    stage = Mockito.mock(StreamingIngestStage.class);
-    Mockito.when(stage.getClientPrefix()).thenReturn("client_prefix");
-    channelCache = new ChannelCache();
-    Mockito.when(client.getChannelCache()).thenReturn(channelCache);
-    conn = Mockito.mock(SnowflakeConnectionV1.class);
-    channel1 =
-        new SnowflakeStreamingIngestChannelInternal(
-            "channel1",
-            "db1",
-            "schema1",
-            "table1",
-            "offset1",
-            0L,
-            0L,
-            client,
-            "key",
-            1234L,
-            OpenChannelRequest.OnErrorOption.CONTINUE,
-            true);
+    abstract TestContext<T> create();
 
-    channel2 =
-        new SnowflakeStreamingIngestChannelInternal(
-            "channel2",
-            "db1",
-            "schema1",
-            "table1",
-            "offset2",
-            10L,
-            100L,
-            client,
-            "key",
-            1234L,
-            OpenChannelRequest.OnErrorOption.CONTINUE,
-            true);
+    @Override
+    public String toString() {
+      return name;
+    }
+  }
 
-    channel3 =
-        new SnowflakeStreamingIngestChannelInternal(
-            "channel3",
-            "db2",
-            "schema1",
-            "table2",
-            "offset3",
-            0L,
-            0L,
-            client,
-            "key",
-            1234L,
-            OpenChannelRequest.OnErrorOption.CONTINUE,
-            true);
-    channelCache.addChannel(channel1);
-    channelCache.addChannel(channel2);
-    channelCache.addChannel(channel3);
+  private abstract static class TestContext<T> implements AutoCloseable {
+    SnowflakeStreamingIngestClientInternal<T> client;
+    ChannelCache<T> channelCache;
+    final Map<String, SnowflakeStreamingIngestChannelInternal<T>> channels = new HashMap<>();
+    FlushService<T> flushService;
+    StreamingIngestStage stage;
+    ParameterProvider parameterProvider;
+    RegisterService registerService;
+
+    final List<ChannelData<T>> channelData = new ArrayList<>();
+
+    TestContext() {
+      stage = Mockito.mock(StreamingIngestStage.class);
+      Mockito.when(stage.getClientPrefix()).thenReturn("client_prefix");
+      parameterProvider = new ParameterProvider();
+      client = Mockito.mock(SnowflakeStreamingIngestClientInternal.class);
+      Mockito.when(client.getParameterProvider()).thenReturn(parameterProvider);
+      channelCache = new ChannelCache<>();
+      Mockito.when(client.getChannelCache()).thenReturn(channelCache);
+      registerService = Mockito.spy(new RegisterService(client, client.isTestMode()));
+      flushService = Mockito.spy(new FlushService<>(client, channelCache, stage, true));
+    }
+
+    ChannelData<T> flushChannel(String name) {
+      SnowflakeStreamingIngestChannelInternal<T> channel = channels.get(name);
+      ChannelData<T> channelData = channel.getRowBuffer().flush(name + "_snowpipe_streaming.bdec");
+      channelData.setChannelContext(channel.getChannelContext());
+      this.channelData.add(channelData);
+      return channelData;
+    }
+
+    BlobMetadata buildAndUpload() throws Exception {
+      List<List<ChannelData<T>>> blobData = Collections.singletonList(channelData);
+      return flushService.buildAndUpload("file_name", blobData);
+    }
+
+    abstract SnowflakeStreamingIngestChannelInternal<T> createChannel(
+        String name,
+        String dbName,
+        String schemaName,
+        String tableName,
+        String offsetToken,
+        Long channelSequencer,
+        Long rowSequencer,
+        String encryptionKey,
+        Long encryptionKeyId,
+        OpenChannelRequest.OnErrorOption onErrorOption,
+        ZoneId defaultTimezone);
+
+    ChannelBuilder channelBuilder(String name) {
+      return new ChannelBuilder(name);
+    }
+
+    class ChannelBuilder {
+      private final String name;
+      private String dbName = "db1";
+      private String schemaName = "schema1";
+      private String tableName = "table1";
+      private String offsetToken = "offset1";
+      private Long channelSequencer = 0L;
+      private Long rowSequencer = 0L;
+      private String encryptionKey = "key";
+      private Long encryptionKeyId = 0L;
+      private OpenChannelRequest.OnErrorOption onErrorOption =
+          OpenChannelRequest.OnErrorOption.CONTINUE;
+
+      private ChannelBuilder(String name) {
+        this.name = name;
+      }
+
+      ChannelBuilder setDBName(String dbName) {
+        this.dbName = dbName;
+        return this;
+      }
+
+      ChannelBuilder setSchemaName(String schemaName) {
+        this.schemaName = schemaName;
+        return this;
+      }
+
+      ChannelBuilder setTableName(String tableName) {
+        this.tableName = tableName;
+        return this;
+      }
+
+      ChannelBuilder setOffsetToken(String offsetToken) {
+        this.offsetToken = offsetToken;
+        return this;
+      }
+
+      ChannelBuilder setChannelSequencer(Long sequencer) {
+        this.channelSequencer = sequencer;
+        return this;
+      }
+
+      ChannelBuilder setRowSequencer(Long sequencer) {
+        this.rowSequencer = sequencer;
+        return this;
+      }
+
+      ChannelBuilder setEncryptionKey(String encryptionKey) {
+        this.encryptionKey = encryptionKey;
+        return this;
+      }
+
+      ChannelBuilder setEncryptionKeyId(Long encryptionKeyId) {
+        this.encryptionKeyId = encryptionKeyId;
+        return this;
+      }
+
+      SnowflakeStreamingIngestChannelInternal<T> buildAndAdd() {
+        SnowflakeStreamingIngestChannelInternal<T> channel =
+            createChannel(
+                name,
+                dbName,
+                schemaName,
+                tableName,
+                offsetToken,
+                channelSequencer,
+                rowSequencer,
+                encryptionKey,
+                encryptionKeyId,
+                onErrorOption,
+                ZoneOffset.UTC);
+        channels.put(name, channel);
+        channelCache.addChannel(channel);
+        return channel;
+      }
+    }
+  }
+
+  private static class RowSetBuilder {
+    private final List<Map<String, Object>> rows = new ArrayList<>();
+
+    private Map<String, Object> lastRow() {
+      return rows.get(rows.size() - 1);
+    }
+
+    RowSetBuilder addColumn(String column, Object value) {
+      lastRow().put(column, value);
+      return this;
+    }
+
+    RowSetBuilder newRow() {
+      if (rows.isEmpty() || !lastRow().isEmpty()) {
+        rows.add(new HashMap<>());
+      }
+      return this;
+    }
+
+    List<Map<String, Object>> build() {
+      return rows;
+    }
+
+    static RowSetBuilder newBuilder() {
+      return new RowSetBuilder().newRow();
+    }
+  }
+
+  private static class ParquetTestContext extends TestContext<List<List<Object>>> {
+
+    SnowflakeStreamingIngestChannelInternal<List<List<Object>>> createChannel(
+        String name,
+        String dbName,
+        String schemaName,
+        String tableName,
+        String offsetToken,
+        Long channelSequencer,
+        Long rowSequencer,
+        String encryptionKey,
+        Long encryptionKeyId,
+        OpenChannelRequest.OnErrorOption onErrorOption,
+        ZoneId defaultTimezone) {
+      return new SnowflakeStreamingIngestChannelInternal<>(
+          name,
+          dbName,
+          schemaName,
+          tableName,
+          offsetToken,
+          channelSequencer,
+          rowSequencer,
+          client,
+          encryptionKey,
+          encryptionKeyId,
+          onErrorOption,
+          defaultTimezone,
+          Constants.BdecVersion.THREE,
+          null);
+    }
+
+    @Override
+    public void close() {}
+
+    static TestContextFactory<List<List<Object>>> createFactory() {
+      return new TestContextFactory<List<List<Object>>>("Parquet") {
+        @Override
+        TestContext<List<List<Object>>> create() {
+          return new ParquetTestContext();
+        }
+      };
+    }
+  }
+
+  TestContextFactory<List<List<Object>>> testContextFactory;
+
+  private SnowflakeStreamingIngestChannelInternal<List<List<Object>>> addChannel(
+      TestContext<List<List<Object>>> testContext, int tableId, long encryptionKeyId) {
+    return testContext
+        .channelBuilder("channel" + UUID.randomUUID())
+        .setDBName("db1")
+        .setSchemaName("PUBLIC")
+        .setTableName("table" + tableId)
+        .setOffsetToken("offset1")
+        .setChannelSequencer(0L)
+        .setRowSequencer(0L)
+        .setEncryptionKey("key")
+        .setEncryptionKeyId(encryptionKeyId)
+        .buildAndAdd();
+  }
+
+  private SnowflakeStreamingIngestChannelInternal<?> addChannel1(TestContext<?> testContext) {
+    return testContext
+        .channelBuilder("channel1")
+        .setDBName("db1")
+        .setSchemaName("schema1")
+        .setTableName("table1")
+        .setOffsetToken("offset1")
+        .setChannelSequencer(0L)
+        .setRowSequencer(0L)
+        .setEncryptionKey("key")
+        .setEncryptionKeyId(1L)
+        .buildAndAdd();
+  }
+
+  private SnowflakeStreamingIngestChannelInternal<?> addChannel2(TestContext<?> testContext) {
+    return testContext
+        .channelBuilder("channel2")
+        .setDBName("db1")
+        .setSchemaName("schema1")
+        .setTableName("table1")
+        .setOffsetToken("offset2")
+        .setChannelSequencer(10L)
+        .setRowSequencer(100L)
+        .setEncryptionKey("key")
+        .setEncryptionKeyId(1L)
+        .buildAndAdd();
+  }
+
+  private SnowflakeStreamingIngestChannelInternal<?> addChannel3(TestContext<?> testContext) {
+    return testContext
+        .channelBuilder("channel3")
+        .setDBName("db2")
+        .setSchemaName("schema1")
+        .setTableName("table2")
+        .setOffsetToken("offset3")
+        .setChannelSequencer(0L)
+        .setRowSequencer(0L)
+        .setEncryptionKey("key3")
+        .setEncryptionKeyId(3L)
+        .buildAndAdd();
+  }
+
+  private SnowflakeStreamingIngestChannelInternal<?> addChannel4(TestContext<?> testContext) {
+    return testContext
+        .channelBuilder("channel4")
+        .setDBName("db1")
+        .setSchemaName("schema1")
+        .setTableName("table1")
+        .setOffsetToken("offset2")
+        .setChannelSequencer(10L)
+        .setRowSequencer(100L)
+        .setEncryptionKey("key4")
+        .setEncryptionKeyId(4L)
+        .buildAndAdd();
+  }
+
+  private static ColumnMetadata createTestIntegerColumn(String name) {
+    ColumnMetadata colInt = new ColumnMetadata();
+    colInt.setOrdinal(1);
+    colInt.setName(name);
+    colInt.setPhysicalType("SB4");
+    colInt.setNullable(true);
+    colInt.setLogicalType("FIXED");
+    colInt.setPrecision(2);
+    colInt.setScale(0);
+    return colInt;
+  }
+
+  private static ColumnMetadata createTestTextColumn(String name) {
+    ColumnMetadata colChar = new ColumnMetadata();
+    colChar.setOrdinal(1);
+    colChar.setName(name);
+    colChar.setPhysicalType("LOB");
+    colChar.setNullable(true);
+    colChar.setLogicalType("TEXT");
+    colChar.setByteLength(14);
+    colChar.setLength(11);
+    colChar.setScale(0);
+    return colChar;
+  }
+
+  private static ColumnMetadata createLargeTestTextColumn(String name) {
+    ColumnMetadata colChar = new ColumnMetadata();
+    colChar.setOrdinal(1);
+    colChar.setName(name);
+    colChar.setPhysicalType("LOB");
+    colChar.setNullable(true);
+    colChar.setLogicalType("TEXT");
+    colChar.setByteLength(14000000);
+    colChar.setLength(11000000);
+    colChar.setScale(0);
+    return colChar;
   }
 
   @Test
   public void testGetFilePath() {
-    FlushService flushService = new FlushService(client, channelCache, stage, false);
+    TestContext<?> testContext = testContextFactory.create();
+    FlushService<?> flushService = testContext.flushService;
     Calendar calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
     String clientPrefix = "honk";
-    String outputString = flushService.getFilePath(calendar, clientPrefix);
+    String outputString = flushService.getBlobPath(calendar, clientPrefix);
     Path outputPath = Paths.get(outputString);
     Assert.assertTrue(outputPath.getFileName().toString().contains(clientPrefix));
     Assert.assertTrue(
@@ -159,7 +422,9 @@ public class FlushServiceTest {
 
   @Test
   public void testFlush() throws Exception {
-    FlushService flushService = Mockito.spy(new FlushService(client, channelCache, stage, false));
+    TestContext<?> testContext = testContextFactory.create();
+    FlushService<?> flushService = testContext.flushService;
+    Mockito.when(flushService.isTestMode()).thenReturn(false);
 
     // Nothing to flush
     flushService.flush(false).get();
@@ -184,40 +449,262 @@ public class FlushServiceTest {
   }
 
   @Test
+  public void testBlobCreation() throws Exception {
+    TestContext<?> testContext = testContextFactory.create();
+    SnowflakeStreamingIngestChannelInternal<?> channel1 = addChannel1(testContext);
+    SnowflakeStreamingIngestChannelInternal<?> channel2 = addChannel2(testContext);
+    SnowflakeStreamingIngestChannelInternal<?> channel4 = addChannel4(testContext);
+    String colName1 = "testBlobCreation1";
+    String colName2 = "testBlobCreation2";
+
+    List<ColumnMetadata> schema =
+        Arrays.asList(createTestIntegerColumn(colName1), createTestTextColumn(colName2));
+    channel1.getRowBuffer().setupSchema(schema);
+    channel2.getRowBuffer().setupSchema(schema);
+    channel4.getRowBuffer().setupSchema(schema);
+
+    List<Map<String, Object>> rows1 =
+        RowSetBuilder.newBuilder()
+            .addColumn(colName1, 11)
+            .addColumn(colName2, "bob")
+            .newRow()
+            .addColumn(colName1, 22)
+            .addColumn(colName2, "bob")
+            .build();
+
+    channel1.insertRows(rows1, "offset1");
+    channel2.insertRows(rows1, "offset2");
+    channel4.insertRows(rows1, "offset4");
+
+    FlushService<?> flushService = testContext.flushService;
+
+    // Force = true flushes
+    flushService.flush(true).get();
+    Mockito.verify(flushService, Mockito.atLeast(2)).buildAndUpload(Mockito.any(), Mockito.any());
+  }
+
+  @Test
+  public void testBlobSplitDueToDifferentSchema() throws Exception {
+    TestContext<?> testContext = testContextFactory.create();
+    SnowflakeStreamingIngestChannelInternal<?> channel1 = addChannel1(testContext);
+    SnowflakeStreamingIngestChannelInternal<?> channel2 = addChannel2(testContext);
+    String colName1 = "testBlobSplitDueToDifferentSchema1";
+    String colName2 = "testBlobSplitDueToDifferentSchema2";
+    String colName3 = "testBlobSplitDueToDifferentSchema3";
+
+    List<ColumnMetadata> schema1 =
+        Arrays.asList(createTestIntegerColumn(colName1), createTestTextColumn(colName2));
+    List<ColumnMetadata> schema2 =
+        Arrays.asList(
+            createTestIntegerColumn(colName1),
+            createTestTextColumn(colName2),
+            createTestIntegerColumn(colName3));
+    channel1.getRowBuffer().setupSchema(schema1);
+    channel2.getRowBuffer().setupSchema(schema2);
+
+    List<Map<String, Object>> rows1 =
+        RowSetBuilder.newBuilder()
+            .addColumn(colName1, 11)
+            .addColumn(colName2, "bob")
+            .newRow()
+            .addColumn(colName1, 22)
+            .addColumn(colName2, "bob")
+            .build();
+
+    List<Map<String, Object>> rows2 =
+        RowSetBuilder.newBuilder()
+            .addColumn(colName1, 11)
+            .addColumn(colName2, "bob")
+            .addColumn(colName3, 11)
+            .newRow()
+            .addColumn(colName1, 22)
+            .addColumn(colName2, "bob")
+            .addColumn(colName3, 22)
+            .build();
+
+    channel1.insertRows(rows1, "offset1");
+    channel2.insertRows(rows2, "offset2");
+
+    FlushService<?> flushService = testContext.flushService;
+
+    // Force = true flushes
+    flushService.flush(true).get();
+    Mockito.verify(flushService, Mockito.atLeast(2)).buildAndUpload(Mockito.any(), Mockito.any());
+  }
+
+  @Test
+  public void testBlobSplitDueToChunkSizeLimit() throws Exception {
+    TestContext<?> testContext = testContextFactory.create();
+    SnowflakeStreamingIngestChannelInternal<?> channel1 = addChannel1(testContext);
+    SnowflakeStreamingIngestChannelInternal<?> channel2 = addChannel2(testContext);
+    String colName1 = "testBlobSplitDueToChunkSizeLimit1";
+    String colName2 = "testBlobSplitDueToChunkSizeLimit2";
+    int rowSize = 10000000;
+    String largeData = new String(new char[rowSize]);
+
+    List<ColumnMetadata> schema =
+        Arrays.asList(createTestIntegerColumn(colName1), createLargeTestTextColumn(colName2));
+    channel1.getRowBuffer().setupSchema(schema);
+    channel2.getRowBuffer().setupSchema(schema);
+
+    RowSetBuilder builder = RowSetBuilder.newBuilder();
+    RowSetBuilder.newBuilder().addColumn(colName1, 11).addColumn(colName2, largeData);
+
+    for (int idx = 0; idx <= MAX_CHUNK_SIZE_IN_BYTES_DEFAULT / (2 * rowSize); idx++) {
+      builder.addColumn(colName1, 11).addColumn(colName2, largeData).newRow();
+    }
+
+    List<Map<String, Object>> rows = builder.build();
+
+    channel1.insertRows(rows, "offset1");
+    channel2.insertRows(rows, "offset2");
+
+    FlushService<?> flushService = testContext.flushService;
+
+    // Force = true flushes
+    flushService.flush(true).get();
+    Mockito.verify(flushService, Mockito.times(2)).buildAndUpload(Mockito.any(), Mockito.any());
+  }
+
+  @Test
+  public void testBlobSplitDueToNumberOfChunks() throws Exception {
+    for (int rowCount : Arrays.asList(0, 1, 30, 111, 159, 287, 1287, 1599, 4496)) {
+      runTestBlobSplitDueToNumberOfChunks(rowCount);
+    }
+  }
+
+  /**
+   * Insert rows in batches of 3 into each table and assert that the expected number of blobs is
+   * generated.
+   *
+   * @param numberOfRows How many rows to insert
+   */
+  public void runTestBlobSplitDueToNumberOfChunks(int numberOfRows) throws Exception {
+    int channelsPerTable = 3;
+    int expectedBlobs =
+        (int)
+            Math.ceil(
+                (double) numberOfRows
+                    / channelsPerTable
+                    / ParameterProvider.MAX_CHUNKS_IN_BLOB_AND_REGISTRATION_REQUEST_DEFAULT);
+
+    final TestContext<List<List<Object>>> testContext = testContextFactory.create();
+
+    for (int i = 0; i < numberOfRows; i++) {
+      SnowflakeStreamingIngestChannelInternal<List<List<Object>>> channel =
+          addChannel(testContext, i / channelsPerTable, 1);
+      channel.setupSchema(Collections.singletonList(createLargeTestTextColumn("C1")));
+      channel.insertRow(Collections.singletonMap("C1", i), "");
+    }
+
+    FlushService<List<List<Object>>> flushService = testContext.flushService;
+    flushService.flush(true).get();
+
+    ArgumentCaptor<List<List<ChannelData<List<List<Object>>>>>> blobDataCaptor =
+        ArgumentCaptor.forClass(List.class);
+    Mockito.verify(flushService, Mockito.times(expectedBlobs))
+        .buildAndUpload(Mockito.any(), blobDataCaptor.capture());
+
+    // 1. list => blobs; 2. list => chunks; 3. list => channels; 4. list => rows, 5. list => columns
+    List<List<List<ChannelData<List<List<Object>>>>>> allUploadedBlobs =
+        blobDataCaptor.getAllValues();
+
+    Assert.assertEquals(numberOfRows, getRows(allUploadedBlobs).size());
+  }
+
+  @Test
+  public void testBlobSplitDueToNumberOfChunksWithLeftoverChannels() throws Exception {
+    final TestContext<List<List<Object>>> testContext = testContextFactory.create();
+
+    for (int i = 0; i < 99; i++) { // 19 simple chunks
+      SnowflakeStreamingIngestChannelInternal<List<List<Object>>> channel =
+          addChannel(testContext, i, 1);
+      channel.setupSchema(Collections.singletonList(createLargeTestTextColumn("C1")));
+      channel.insertRow(Collections.singletonMap("C1", i), "");
+    }
+
+    // 20th chunk would contain multiple channels, but there are some with different encryption key
+    // ID, so they spill to a new blob
+    SnowflakeStreamingIngestChannelInternal<List<List<Object>>> channel1 =
+        addChannel(testContext, 99, 1);
+    channel1.setupSchema(Collections.singletonList(createLargeTestTextColumn("C1")));
+    channel1.insertRow(Collections.singletonMap("C1", 0), "");
+
+    SnowflakeStreamingIngestChannelInternal<List<List<Object>>> channel2 =
+        addChannel(testContext, 99, 2);
+    channel2.setupSchema(Collections.singletonList(createLargeTestTextColumn("C1")));
+    channel2.insertRow(Collections.singletonMap("C1", 0), "");
+
+    SnowflakeStreamingIngestChannelInternal<List<List<Object>>> channel3 =
+        addChannel(testContext, 99, 2);
+    channel3.setupSchema(Collections.singletonList(createLargeTestTextColumn("C1")));
+    channel3.insertRow(Collections.singletonMap("C1", 0), "");
+
+    FlushService<List<List<Object>>> flushService = testContext.flushService;
+    flushService.flush(true).get();
+
+    ArgumentCaptor<List<List<ChannelData<List<List<Object>>>>>> blobDataCaptor =
+        ArgumentCaptor.forClass(List.class);
+    Mockito.verify(flushService, Mockito.atLeast(2))
+        .buildAndUpload(Mockito.any(), blobDataCaptor.capture());
+
+    // 1. list => blobs; 2. list => chunks; 3. list => channels; 4. list => rows, 5. list => columns
+    List<List<List<ChannelData<List<List<Object>>>>>> allUploadedBlobs =
+        blobDataCaptor.getAllValues();
+
+    Assert.assertEquals(102, getRows(allUploadedBlobs).size());
+  }
+
+  private List<List<Object>> getRows(List<List<List<ChannelData<List<List<Object>>>>>> blobs) {
+    List<List<Object>> result = new ArrayList<>();
+    blobs.forEach(
+        chunks ->
+            chunks.forEach(
+                channels ->
+                    channels.forEach(
+                        chunkData ->
+                            result.addAll(((ParquetChunkData) chunkData.getVectors()).rows))));
+    return result;
+  }
+
+  @Test
   public void testBuildAndUpload() throws Exception {
-    FlushService flushService = Mockito.spy(new FlushService(client, channelCache, stage, true));
+    long expectedBuildLatencyMs = 100;
+    long expectedUploadLatencyMs = 200;
 
-    List<List<ChannelData>> blobData = new ArrayList<>();
-    List<ChannelData> chunkData = new ArrayList<>();
+    TestContext<?> testContext = testContextFactory.create();
+    SnowflakeStreamingIngestChannelInternal<?> channel1 = addChannel1(testContext);
+    SnowflakeStreamingIngestChannelInternal<?> channel2 = addChannel2(testContext);
+    String colName1 = "testBuildAndUpload1";
+    String colName2 = "testBuildAndUpload2";
 
-    // Construct fields
-    ChannelData channel1Data = new ChannelData();
-    ChannelData channel2Data = new ChannelData();
+    List<ColumnMetadata> schema =
+        Arrays.asList(createTestIntegerColumn(colName1), createTestTextColumn(colName2));
+    channel1.getRowBuffer().setupSchema(schema);
+    channel2.getRowBuffer().setupSchema(schema);
 
-    FieldVector vector1 = new VarCharVector("vector1", allocator);
-    FieldVector vector2 = new IntVector("vector2", allocator);
-    FieldVector vector3 = new VarCharVector("vector3", allocator);
-    FieldVector vector4 = new IntVector("vector4", allocator);
-    List<FieldVector> vectorList1 = new ArrayList<>();
-    vectorList1.add(vector1);
-    vectorList1.add(vector2);
-    List<FieldVector> vectorList2 = new ArrayList<>();
-    vectorList2.add(vector3);
-    vectorList2.add(vector4);
+    List<Map<String, Object>> rows1 =
+        RowSetBuilder.newBuilder()
+            .addColumn(colName1, 11)
+            .addColumn(colName2, "bob")
+            .newRow()
+            .addColumn(colName1, 22)
+            .addColumn(colName2, "bob")
+            .build();
+    List<Map<String, Object>> rows2 =
+        RowSetBuilder.newBuilder().addColumn(colName1, null).addColumn(colName2, "toby").build();
 
-    VectorSchemaRoot vectorRoot1 = new VectorSchemaRoot(vectorList1);
-    vectorRoot1.setRowCount(2);
-    VectorSchemaRoot vectorRoot2 = new VectorSchemaRoot(vectorList2);
-    vectorRoot2.setRowCount(1);
+    channel1.insertRows(rows1, "offset1");
+    channel2.insertRows(rows2, "offset2");
 
-    channel1Data.setVectors(vectorRoot1);
-    channel2Data.setVectors(vectorRoot2);
+    ChannelData<?> channel1Data = testContext.flushChannel(channel1.getName());
+    ChannelData<?> channel2Data = testContext.flushChannel(channel2.getName());
 
     Map<String, RowBufferStats> eps1 = new HashMap<>();
     Map<String, RowBufferStats> eps2 = new HashMap<>();
 
-    RowBufferStats stats1 = new RowBufferStats();
-    RowBufferStats stats2 = new RowBufferStats();
+    RowBufferStats stats1 = new RowBufferStats("COL1");
+    RowBufferStats stats2 = new RowBufferStats("COL1");
 
     eps1.put("one", stats1);
     eps2.put("one", stats2);
@@ -231,60 +718,49 @@ public class FlushServiceTest {
     channel1Data.setColumnEps(eps1);
     channel2Data.setColumnEps(eps2);
 
-    chunkData.add(channel1Data);
-    chunkData.add(channel2Data);
-    blobData.add(chunkData);
-
-    // Populate test row data
-    ((VarCharVector) vector1).setSafe(0, new Text("alice"));
-    ((VarCharVector) vector1).setSafe(1, new Text("bob"));
-    ((IntVector) vector2).setSafe(0, 11);
-    ((IntVector) vector2).setSafe(1, 22);
-
-    ((VarCharVector) vector3).setSafe(0, new Text("toby"));
-    ((IntVector) vector4).setNull(0);
-
-    vector1.setValueCount(2);
-    vector2.setValueCount(2);
-    vector3.setValueCount(1);
-    vector4.setValueCount(1);
-
     channel1Data.setRowSequencer(0L);
-    channel1Data.setOffsetToken("offset1");
     channel1Data.setBufferSize(100);
-    channel1Data.setChannel(channel1);
-
     channel2Data.setRowSequencer(10L);
-    channel2Data.setOffsetToken("offset2");
     channel2Data.setBufferSize(100);
-    channel2Data.setChannel(channel2);
 
-    BlobMetadata blobMetadata = flushService.buildAndUpload("file_name", blobData);
+    // set client timers
+
+    SnowflakeStreamingIngestClientInternal client = testContext.client;
+    client.buildLatency = this.setupTimer(expectedBuildLatencyMs);
+    client.uploadLatency = this.setupTimer(expectedUploadLatencyMs);
+    client.uploadThroughput = Mockito.mock(Meter.class);
+    client.blobSizeHistogram = Mockito.mock(Histogram.class);
+    client.blobRowCountHistogram = Mockito.mock(Histogram.class);
+
+    BlobMetadata blobMetadata = testContext.buildAndUpload();
 
     EpInfo expectedChunkEpInfo =
-        ArrowRowBuffer.buildEpInfoFromStats(3, ChannelData.getCombinedColumnStatsMap(eps1, eps2));
+        AbstractRowBuffer.buildEpInfoFromStats(
+            3, ChannelData.getCombinedColumnStatsMap(eps1, eps2));
 
     ChannelMetadata expectedChannel1Metadata =
         ChannelMetadata.builder()
-            .setOwningChannel(channel1)
+            .setOwningChannelFromContext(channel1.getChannelContext())
             .setRowSequencer(1L)
             .setOffsetToken("offset1")
             .build();
     ChannelMetadata expectedChannel2Metadata =
         ChannelMetadata.builder()
-            .setOwningChannel(channel2)
+            .setOwningChannelFromContext(channel2.getChannelContext())
             .setRowSequencer(10L)
             .setOffsetToken("offset2")
             .build();
     ChunkMetadata expectedChunkMetadata =
         ChunkMetadata.builder()
-            .setOwningTable(channel1)
+            .setOwningTableFromChannelContext(channel1.getChannelContext())
             .setChunkStartOffset(0L)
             .setChunkLength(248)
             .setChannelList(Arrays.asList(expectedChannel1Metadata, expectedChannel2Metadata))
             .setChunkMD5("md5")
             .setEncryptionKeyId(1234L)
             .setEpInfo(expectedChunkEpInfo)
+            .setFirstInsertTimeInMs(1L)
+            .setLastInsertTimeInMs(2L)
             .build();
 
     // Check FlushService.upload called with correct arguments
@@ -292,14 +768,20 @@ public class FlushServiceTest {
     final ArgumentCaptor<byte[]> blobCaptor = ArgumentCaptor.forClass(byte[].class);
     final ArgumentCaptor<List<ChunkMetadata>> metadataCaptor = ArgumentCaptor.forClass(List.class);
 
-    Mockito.verify(flushService)
-        .upload(nameCaptor.capture(), blobCaptor.capture(), metadataCaptor.capture());
+    Mockito.verify(testContext.flushService)
+        .upload(
+            nameCaptor.capture(),
+            blobCaptor.capture(),
+            metadataCaptor.capture(),
+            ArgumentMatchers.any());
     Assert.assertEquals("file_name", nameCaptor.getValue());
 
     ChunkMetadata metadataResult = metadataCaptor.getValue().get(0);
     List<ChannelMetadata> channelMetadataResult = metadataResult.getChannels();
 
     Assert.assertEquals(BlobBuilder.computeMD5(blobCaptor.getValue()), blobMetadata.getMD5());
+    Assert.assertEquals(expectedBuildLatencyMs, blobMetadata.getBlobStats().getBuildDurationMs());
+    Assert.assertEquals(expectedUploadLatencyMs, blobMetadata.getBlobStats().getUploadDurationMs());
 
     Assert.assertEquals(
         expectedChunkEpInfo.getRowCount(), metadataResult.getEpInfo().getRowCount());
@@ -316,12 +798,12 @@ public class FlushServiceTest {
     Assert.assertEquals(2, metadataResult.getChannels().size()); // Two channels on the table
 
     Assert.assertEquals("channel1", channelMetadataResult.get(0).getChannelName());
-    Assert.assertEquals("offset1", channelMetadataResult.get(0).getOffsetToken());
+    Assert.assertEquals("offset1", channelMetadataResult.get(0).getEndOffsetToken());
     Assert.assertEquals(0L, (long) channelMetadataResult.get(0).getRowSequencer());
     Assert.assertEquals(0L, (long) channelMetadataResult.get(0).getClientSequencer());
 
     Assert.assertEquals("channel2", channelMetadataResult.get(1).getChannelName());
-    Assert.assertEquals("offset2", channelMetadataResult.get(1).getOffsetToken());
+    Assert.assertEquals("offset2", channelMetadataResult.get(1).getEndOffsetToken());
     Assert.assertEquals(10L, (long) channelMetadataResult.get(1).getRowSequencer());
     Assert.assertEquals(10L, (long) channelMetadataResult.get(1).getClientSequencer());
 
@@ -333,66 +815,41 @@ public class FlushServiceTest {
                 (int) (metadataResult.getChunkStartOffset() + metadataResult.getChunkLength())));
     Assert.assertEquals(md5, metadataResult.getChunkMD5());
 
-    try {
-      // Close allocator to make sure no memory leak
-      allocator.close();
-    } catch (Exception e) {
-      Assert.fail(String.format("Allocator close failure. Caused by %s", e.getMessage()));
-    }
+    testContext.close();
   }
 
   @Test
   public void testBuildErrors() throws Exception {
-    // build should error if we try to group channels for different tables together
-    FlushService flushService = Mockito.spy(new FlushService(client, channelCache, stage, true));
+    TestContext<?> testContext = testContextFactory.create();
+    SnowflakeStreamingIngestChannelInternal<?> channel1 = addChannel1(testContext);
+    SnowflakeStreamingIngestChannelInternal<?> channel3 = addChannel3(testContext);
+    String colName1 = "testBuildErrors1";
+    String colName2 = "testBuildErrors2";
 
-    List<List<ChannelData>> channelData = new ArrayList<>();
-    List<ChannelData> channelData1 = new ArrayList<>();
+    List<ColumnMetadata> schema =
+        Arrays.asList(createTestIntegerColumn(colName1), createTestTextColumn(colName2));
+    channel1.getRowBuffer().setupSchema(schema);
+    channel3.getRowBuffer().setupSchema(schema);
 
-    // Construct fields
-    ChannelData data1 = new ChannelData();
-    ChannelData data2 = new ChannelData();
+    List<Map<String, Object>> rows1 =
+        RowSetBuilder.newBuilder().addColumn(colName1, 0).addColumn(colName2, "alice").build();
+    List<Map<String, Object>> rows2 =
+        RowSetBuilder.newBuilder().addColumn(colName1, 0).addColumn(colName2, 111).build();
 
-    FieldVector vector1 = new VarCharVector("vector1", allocator);
-    FieldVector vector3 = new IntVector("vector3", allocator);
-    vector1.allocateNew();
-    vector3.allocateNew();
-    List<FieldVector> vectorList1 = new ArrayList<>();
-    vectorList1.add(vector1);
-    List<FieldVector> vectorList2 = new ArrayList<>();
-    vectorList1.add(vector3);
+    channel1.insertRows(rows1, "offset1");
+    channel3.insertRows(rows2, "offset2");
 
-    VectorSchemaRoot vectorRoot1 = new VectorSchemaRoot(vectorList1);
-    vectorRoot1.setRowCount(2);
-    VectorSchemaRoot vectorRoot2 = new VectorSchemaRoot(vectorList2);
-    vectorRoot2.setRowCount(1);
-
-    data1.setVectors(vectorRoot1);
-    data2.setVectors(vectorRoot2);
-
-    channelData1.add(data1);
-    channelData1.add(data2);
-    channelData.add(channelData1);
-
-    // Populate test row data
-    ((VarCharVector) vector1).setSafe(0, new Text("alice"));
-    ((IntVector) vector3).setSafe(0, 111);
-
-    vector1.setValueCount(2);
-    vector3.setValueCount(3);
+    ChannelData<?> data1 = testContext.flushChannel(channel1.getName());
+    ChannelData<?> data2 = testContext.flushChannel(channel3.getName());
 
     data1.setRowSequencer(0L);
-    data1.setOffsetToken("offset1");
     data1.setBufferSize(100);
-    data1.setChannel(channel1);
 
     data2.setRowSequencer(10L);
-    data2.setOffsetToken("offset3");
     data2.setBufferSize(100);
-    data2.setChannel(channel3);
 
     try {
-      flushService.buildAndUpload("file_name", channelData);
+      testContext.buildAndUpload();
       Assert.fail("Expected SFException");
     } catch (SFException err) {
       Assert.assertEquals(ErrorCode.INVALID_DATA_IN_CHUNK.getMessageCode(), err.getVendorCode());
@@ -400,16 +857,16 @@ public class FlushServiceTest {
   }
 
   @Test
-  public void testInvalidateChannels() throws Exception {
+  public void testInvalidateChannels() {
     // Create a new Client in order to not interfere with other tests
-    SnowflakeStreamingIngestClientInternal client =
+    SnowflakeStreamingIngestClientInternal<StubChunkData> client =
         Mockito.mock(SnowflakeStreamingIngestClientInternal.class);
     ParameterProvider parameterProvider = new ParameterProvider();
-    ChannelCache channelCache = new ChannelCache();
+    ChannelCache<StubChunkData> channelCache = new ChannelCache<>();
     Mockito.when(client.getChannelCache()).thenReturn(channelCache);
     Mockito.when(client.getParameterProvider()).thenReturn(parameterProvider);
-    SnowflakeStreamingIngestChannelInternal channel1 =
-        new SnowflakeStreamingIngestChannelInternal(
+    SnowflakeStreamingIngestChannelInternal<StubChunkData> channel1 =
+        new SnowflakeStreamingIngestChannelInternal<>(
             "channel1",
             "db1",
             "schema1",
@@ -421,10 +878,10 @@ public class FlushServiceTest {
             "key",
             1234L,
             OpenChannelRequest.OnErrorOption.CONTINUE,
-            true);
+            ZoneOffset.UTC);
 
-    SnowflakeStreamingIngestChannelInternal channel2 =
-        new SnowflakeStreamingIngestChannelInternal(
+    SnowflakeStreamingIngestChannelInternal<StubChunkData> channel2 =
+        new SnowflakeStreamingIngestChannelInternal<>(
             "channel2",
             "db1",
             "schema1",
@@ -436,40 +893,29 @@ public class FlushServiceTest {
             "key",
             1234L,
             OpenChannelRequest.OnErrorOption.CONTINUE,
-            true);
+            ZoneOffset.UTC);
 
     channelCache.addChannel(channel1);
     channelCache.addChannel(channel2);
 
-    List<List<ChannelData>> blobData = new ArrayList<>();
-    List<ChannelData> innerData = new ArrayList<>();
+    List<List<ChannelData<StubChunkData>>> blobData = new ArrayList<>();
+    List<ChannelData<StubChunkData>> innerData = new ArrayList<>();
     blobData.add(innerData);
 
-    ChannelData channel1Data = new ChannelData();
-    ChannelData channel2Data = new ChannelData();
-    channel1Data.setChannel(channel1);
-    channel2Data.setChannel(channel1);
+    ChannelData<StubChunkData> channel1Data = new ChannelData<>();
+    ChannelData<StubChunkData> channel2Data = new ChannelData<>();
+    channel1Data.setChannelContext(channel1.getChannelContext());
+    channel2Data.setChannelContext(channel1.getChannelContext());
 
-    FieldVector vector1 = new VarCharVector("vector1", allocator);
-    FieldVector vector2 = new IntVector("vector2", allocator);
-    FieldVector vector3 = new VarCharVector("vector3", allocator);
-    FieldVector vector4 = new IntVector("vector4", allocator);
-    List<FieldVector> vectorList1 = new ArrayList<>();
-    vectorList1.add(vector1);
-    vectorList1.add(vector2);
-    List<FieldVector> vectorList2 = new ArrayList<>();
-    vectorList2.add(vector3);
-    vectorList2.add(vector4);
-
-    VectorSchemaRoot vectorRoot1 = new VectorSchemaRoot(vectorList1);
-    VectorSchemaRoot vectorRoot2 = new VectorSchemaRoot(vectorList2);
-
-    channel1Data.setVectors(vectorRoot1);
-    channel2Data.setVectors(vectorRoot2);
+    channel1Data.setVectors(new StubChunkData());
+    channel2Data.setVectors(new StubChunkData());
     innerData.add(channel1Data);
     innerData.add(channel2Data);
 
-    FlushService flushService = new FlushService(client, channelCache, stage, false);
+    StreamingIngestStage stage = Mockito.mock(StreamingIngestStage.class);
+    Mockito.when(stage.getClientPrefix()).thenReturn("client_prefix");
+    FlushService<StubChunkData> flushService =
+        new FlushService<>(client, channelCache, stage, false);
     flushService.invalidateAllChannelsInBlob(blobData);
 
     Assert.assertFalse(channel1.isValid());
@@ -478,6 +924,9 @@ public class FlushServiceTest {
 
   @Test
   public void testBlobBuilder() throws Exception {
+    TestContext<?> testContext = testContextFactory.create();
+    SnowflakeStreamingIngestChannelInternal<?> channel1 = addChannel1(testContext);
+
     ObjectMapper mapper = new ObjectMapper();
     List<ChunkMetadata> chunksMetadataList = new ArrayList<>();
     List<byte[]> chunksDataList = new ArrayList<>();
@@ -489,34 +938,39 @@ public class FlushServiceTest {
 
     Map<String, RowBufferStats> eps1 = new HashMap<>();
 
-    RowBufferStats stats1 = new RowBufferStats();
+    RowBufferStats stats1 = new RowBufferStats("COL1");
 
     eps1.put("one", stats1);
 
     stats1.addIntValue(new BigInteger("10"));
     stats1.addIntValue(new BigInteger("15"));
-    EpInfo epInfo = ArrowRowBuffer.buildEpInfoFromStats(2, eps1);
+    EpInfo epInfo = AbstractRowBuffer.buildEpInfoFromStats(2, eps1);
 
     ChannelMetadata channelMetadata =
         ChannelMetadata.builder()
-            .setOwningChannel(channel1)
+            .setOwningChannelFromContext(channel1.getChannelContext())
             .setRowSequencer(0L)
             .setOffsetToken("offset1")
             .build();
     ChunkMetadata chunkMetadata =
         ChunkMetadata.builder()
-            .setOwningTable(channel1)
+            .setOwningTableFromChannelContext(channel1.getChannelContext())
             .setChunkStartOffset(0L)
             .setChunkLength(dataSize)
-            .setChannelList(Arrays.asList(channelMetadata))
+            .setUncompressedChunkLength(dataSize * 2)
+            .setChannelList(Collections.singletonList(channelMetadata))
             .setChunkMD5("md5")
             .setEncryptionKeyId(1234L)
             .setEpInfo(epInfo)
+            .setFirstInsertTimeInMs(1L)
+            .setLastInsertTimeInMs(2L)
             .build();
 
     chunksMetadataList.add(chunkMetadata);
 
-    byte[] blob = BlobBuilder.build(chunksMetadataList, chunksDataList, checksum, dataSize);
+    final Constants.BdecVersion bdecVersion = ParameterProvider.BLOB_FORMAT_VERSION_DEFAULT;
+    byte[] blob =
+        BlobBuilder.buildBlob(chunksMetadataList, chunksDataList, checksum, dataSize, bdecVersion);
 
     // Read the blob byte array back to valid the behavior
     InputStream input = new ByteArrayInputStream(blob);
@@ -528,7 +982,7 @@ public class FlushServiceTest {
               Arrays.copyOfRange(blob, offset, offset += BLOB_TAG_SIZE_IN_BYTES),
               StandardCharsets.UTF_8));
       Assert.assertEquals(
-          BLOB_FORMAT_VERSION,
+          bdecVersion.toByte(),
           Arrays.copyOfRange(blob, offset, offset += BLOB_VERSION_SIZE_IN_BYTES)[0]);
       long totalSize =
           ByteBuffer.wrap(Arrays.copyOfRange(blob, offset, offset += BLOB_FILE_SIZE_SIZE_IN_BYTES))
@@ -554,6 +1008,9 @@ public class FlushServiceTest {
       Assert.assertEquals(chunkMetadata.getTableName(), map.get("table"));
       Assert.assertEquals(chunkMetadata.getSchemaName(), map.get("schema"));
       Assert.assertEquals(chunkMetadata.getDBName(), map.get("database"));
+      Assert.assertEquals(chunkMetadata.getChunkLength(), map.get("chunk_length"));
+      Assert.assertEquals(
+          chunkMetadata.getUncompressedChunkLength(), map.get("chunk_length_uncompressed"));
       Assert.assertEquals(
           Long.toString(chunkMetadata.getChunkStartOffset() - offset),
           map.get("chunk_start_offset").toString());
@@ -569,7 +1026,8 @@ public class FlushServiceTest {
 
   @Test
   public void testShutDown() throws Exception {
-    FlushService flushService = new FlushService(client, channelCache, stage, false);
+    TestContext<?> testContext = testContextFactory.create();
+    FlushService<?> flushService = testContext.flushService;
 
     Assert.assertFalse(flushService.buildUploadWorkers.isShutdown());
     Assert.assertFalse(flushService.registerWorker.isShutdown());
@@ -595,5 +1053,14 @@ public class FlushServiceTest {
     byte[] decryptedData = Cryptor.decrypt(encryptedData, encryptionKey, diversifier, 0);
 
     Assert.assertArrayEquals(data, decryptedData);
+  }
+
+  private Timer setupTimer(long expectedLatencyMs) {
+    Timer.Context timerContext = Mockito.mock(Timer.Context.class);
+    Mockito.when(timerContext.stop()).thenReturn(TimeUnit.MILLISECONDS.toNanos(expectedLatencyMs));
+    Timer timer = Mockito.mock(Timer.class);
+    Mockito.when(timer.time()).thenReturn(timerContext);
+
+    return timer;
   }
 }

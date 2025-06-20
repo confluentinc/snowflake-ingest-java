@@ -6,21 +6,28 @@ package net.snowflake.ingest.streaming.internal;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Supplier;
 import net.snowflake.ingest.utils.ErrorCode;
+import net.snowflake.ingest.utils.Pair;
 import net.snowflake.ingest.utils.SFException;
-import org.apache.arrow.vector.VectorSchemaRoot;
 
 /**
  * Contains the data and metadata returned for each channel flush, which will be used to build the
  * blob and register blob request
+ *
+ * @param <T> type of column data (Parquet {@link ParquetChunkData}
  */
-class ChannelData {
+class ChannelData<T> {
   private Long rowSequencer;
-  private String offsetToken;
-  private VectorSchemaRoot vectors;
+  private String endOffsetToken;
+  private String startOffsetToken;
+  private T vectors;
   private float bufferSize;
-  private SnowflakeStreamingIngestChannelInternal channel;
+  private int rowCount;
   private Map<String, RowBufferStats> columnEps;
+  private Pair<Long, Long> minMaxInsertTimeInMs;
+  private ChannelFlushContext channelFlushContext;
+  private Supplier<Flusher<T>> flusherFactory;
 
   // TODO performance test this vs in place update
   /**
@@ -37,11 +44,17 @@ class ChannelData {
     if (left == null || right == null) {
       throw new SFException(ErrorCode.INTERNAL_ERROR, "null column stats");
     }
-    if (left.size() != right.size()) {
-      throw new SFException(ErrorCode.INTERNAL_ERROR, "Column stats map key mismatch");
-    }
-    Map<String, RowBufferStats> result = new HashMap<>();
 
+    if (left.size() != right.size()) {
+      throw new SFException(
+          ErrorCode.INTERNAL_ERROR,
+          String.format(
+              "Column stats map key size mismatch, left=%d, right=%d, leftKeySet=%s,"
+                  + " rightKeySet=%s",
+              left.size(), right.size(), left.keySet(), right.keySet()));
+    }
+
+    Map<String, RowBufferStats> result = new HashMap<>();
     try {
       for (String key : left.keySet()) {
         RowBufferStats leftStats = left.get(key);
@@ -49,9 +62,21 @@ class ChannelData {
         result.put(key, RowBufferStats.getCombinedStats(leftStats, rightStats));
       }
     } catch (NullPointerException npe) {
-      throw new SFException(ErrorCode.INTERNAL_ERROR, "Column stats map key mismatch");
+      throw new SFException(npe, ErrorCode.INTERNAL_ERROR, "Column stats map key mismatch");
     }
     return result;
+  }
+
+  /**
+   * Combines the two paris of min/max insert timestamp together
+   *
+   * @return A new pair which the first element is min(left min, right min) and the second element
+   *     is max(left max, right max)
+   */
+  public static Pair<Long, Long> getCombinedMinMaxInsertTimeInMs(
+      Pair<Long, Long> left, Pair<Long, Long> right) {
+    return new Pair<>(
+        Math.min(left.getFirst(), right.getFirst()), Math.max(left.getSecond(), right.getSecond()));
   }
 
   public Map<String, RowBufferStats> getColumnEps() {
@@ -70,24 +95,36 @@ class ChannelData {
     this.rowSequencer = rowSequencer;
   }
 
-  String getOffsetToken() {
-    return this.offsetToken;
+  String getEndOffsetToken() {
+    return this.endOffsetToken;
   }
 
-  void setOffsetToken(String offsetToken) {
-    this.offsetToken = offsetToken;
+  String getStartOffsetToken() {
+    return this.startOffsetToken;
   }
 
-  VectorSchemaRoot getVectors() {
+  void setEndOffsetToken(String endOffsetToken) {
+    this.endOffsetToken = endOffsetToken;
+  }
+
+  void setStartOffsetToken(String startOffsetToken) {
+    this.startOffsetToken = startOffsetToken;
+  }
+
+  T getVectors() {
     return this.vectors;
   }
 
-  void setVectors(VectorSchemaRoot vectors) {
+  void setVectors(T vectors) {
     this.vectors = vectors;
   }
 
   int getRowCount() {
-    return this.vectors.getRowCount();
+    return this.rowCount;
+  }
+
+  void setRowCount(int rowCount) {
+    this.rowCount = rowCount;
   }
 
   float getBufferSize() {
@@ -98,16 +135,46 @@ class ChannelData {
     this.bufferSize = bufferSize;
   }
 
-  SnowflakeStreamingIngestChannelInternal getChannel() {
-    return this.channel;
+  public ChannelFlushContext getChannelContext() {
+    return channelFlushContext;
   }
 
-  void setChannel(SnowflakeStreamingIngestChannelInternal channel) {
-    this.channel = channel;
+  public void setChannelContext(ChannelFlushContext channelFlushContext) {
+    this.channelFlushContext = channelFlushContext;
+  }
+
+  public Flusher<T> createFlusher() {
+    return flusherFactory.get();
+  }
+
+  public void setFlusherFactory(Supplier<Flusher<T>> flusherFactory) {
+    this.flusherFactory = flusherFactory;
+  }
+
+  Pair<Long, Long> getMinMaxInsertTimeInMs() {
+    return this.minMaxInsertTimeInMs;
+  }
+
+  void setMinMaxInsertTimeInMs(Pair<Long, Long> minMaxInsertTimeInMs) {
+    this.minMaxInsertTimeInMs = minMaxInsertTimeInMs;
   }
 
   @Override
   public String toString() {
-    return this.channel.toString();
+    return "ChannelData{"
+        + "rowSequencer="
+        + rowSequencer
+        + ", endOffsetToken='"
+        + endOffsetToken
+        + ", startOffsetToken='"
+        + startOffsetToken
+        + '\''
+        + ", bufferSize="
+        + bufferSize
+        + ", rowCount="
+        + rowCount
+        + ", channelContext="
+        + channelFlushContext
+        + '}';
   }
 }

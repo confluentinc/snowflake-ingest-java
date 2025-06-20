@@ -5,65 +5,58 @@
 package net.snowflake.ingest.streaming.internal;
 
 import static net.snowflake.ingest.utils.Constants.INSERT_THROTTLE_MAX_RETRY_COUNT;
-import static net.snowflake.ingest.utils.Constants.MAX_CHUNK_SIZE_IN_BYTES;
+import static net.snowflake.ingest.utils.Constants.RESPONSE_SUCCESS;
+import static net.snowflake.ingest.utils.ParameterProvider.MAX_MEMORY_LIMIT_IN_BYTES_DEFAULT;
 
+import com.google.common.annotations.VisibleForTesting;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
+import javax.annotation.Nullable;
+import net.snowflake.ingest.streaming.DropChannelRequest;
 import net.snowflake.ingest.streaming.InsertValidationResponse;
+import net.snowflake.ingest.streaming.OffsetTokenVerificationFunction;
 import net.snowflake.ingest.streaming.OpenChannelRequest;
 import net.snowflake.ingest.streaming.SnowflakeStreamingIngestChannel;
+import net.snowflake.ingest.utils.Constants;
 import net.snowflake.ingest.utils.ErrorCode;
 import net.snowflake.ingest.utils.Logging;
 import net.snowflake.ingest.utils.SFException;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
+import net.snowflake.ingest.utils.Utils;
 
-/** The first version of implementation for SnowflakeStreamingIngestChannel */
-class SnowflakeStreamingIngestChannelInternal implements SnowflakeStreamingIngestChannel {
+/**
+ * The first version of implementation for SnowflakeStreamingIngestChannel
+ *
+ * @param <T> type of column data {@link ParquetChunkData})
+ */
+class SnowflakeStreamingIngestChannelInternal<T> implements SnowflakeStreamingIngestChannel {
 
   private static final Logging logger = new Logging(SnowflakeStreamingIngestChannelInternal.class);
 
-  private final String channelName;
-  private final String dbName;
-  private final String schemaName;
-  private final String tableName;
-  private volatile String offsetToken;
-  private final AtomicLong rowSequencer;
-
-  // Sequencer for this channel, corresponding to client sequencer at server side because each
-  // connection to a channel at server side will be seen as a connection from a new client
-  private final Long channelSequencer;
+  // this context contains channel immutable identification and encryption attributes
+  private final ChannelFlushContext channelFlushContext;
 
   // Reference to the row buffer
-  private final ArrowRowBuffer arrowBuffer;
-
-  // Indicates whether the channel is still valid
-  private volatile boolean isValid;
+  private final RowBuffer<T> rowBuffer;
 
   // Indicates whether the channel is closed
   private volatile boolean isClosed;
 
   // Reference to the client that owns this channel
-  private final SnowflakeStreamingIngestClientInternal owningClient;
+  private final SnowflakeStreamingIngestClientInternal<T> owningClient;
 
-  // Memory allocator
-  private final BufferAllocator allocator;
+  // State of the channel that will be shared with its underlying buffer
+  private final ChannelRuntimeState channelState;
 
-  // Data encryption key
-  private final String encryptionKey;
-
-  // Data encryption key id
-  private final Long encryptionKeyId;
-
-  // Indicates whether we're using it as of the any tests
-  private boolean isTestMode;
-
-  // ON_ERROR option for this channel
-  private final OpenChannelRequest.OnErrorOption onErrorOption;
+  // Internal map of column name -> column properties
+  private final Map<String, ColumnProperties> tableColumns;
 
   /**
    * Constructor for TESTING ONLY which allows us to set the test mode
@@ -76,7 +69,6 @@ class SnowflakeStreamingIngestChannelInternal implements SnowflakeStreamingInges
    * @param channelSequencer
    * @param rowSequencer
    * @param client
-   * @param isTestMode
    */
   SnowflakeStreamingIngestChannelInternal(
       String name,
@@ -86,59 +78,11 @@ class SnowflakeStreamingIngestChannelInternal implements SnowflakeStreamingInges
       String offsetToken,
       Long channelSequencer,
       Long rowSequencer,
-      SnowflakeStreamingIngestClientInternal client,
+      SnowflakeStreamingIngestClientInternal<T> client,
       String encryptionKey,
       Long encryptionKeyId,
       OpenChannelRequest.OnErrorOption onErrorOption,
-      boolean isTestMode) {
-    this.channelName = name;
-    this.dbName = dbName;
-    this.schemaName = schemaName;
-    this.tableName = tableName;
-    this.offsetToken = offsetToken;
-    this.channelSequencer = channelSequencer;
-    this.rowSequencer = new AtomicLong(rowSequencer);
-    this.isValid = true;
-    this.isClosed = false;
-    this.owningClient = client;
-    this.isTestMode = isTestMode;
-    this.allocator =
-        isTestMode || owningClient.isTestMode()
-            ? new RootAllocator()
-            : this.owningClient
-                .getAllocator()
-                .newChildAllocator(name, 0, this.owningClient.getAllocator().getLimit());
-    this.arrowBuffer = new ArrowRowBuffer(this);
-    this.encryptionKey = encryptionKey;
-    this.encryptionKeyId = encryptionKeyId;
-    this.onErrorOption = onErrorOption;
-    logger.logDebug("Channel={} created for table={}", this.channelName, this.tableName);
-  }
-
-  /**
-   * Default Constructor
-   *
-   * @param name
-   * @param dbName
-   * @param schemaName
-   * @param tableName
-   * @param offsetToken
-   * @param channelSequencer
-   * @param rowSequencer
-   * @param client
-   */
-  SnowflakeStreamingIngestChannelInternal(
-      String name,
-      String dbName,
-      String schemaName,
-      String tableName,
-      String offsetToken,
-      Long channelSequencer,
-      Long rowSequencer,
-      SnowflakeStreamingIngestClientInternal client,
-      String encryptionKey,
-      Long encryptionKeyId,
-      OpenChannelRequest.OnErrorOption onErrorOption) {
+      ZoneOffset defaultTimezone) {
     this(
         name,
         dbName,
@@ -151,7 +95,49 @@ class SnowflakeStreamingIngestChannelInternal implements SnowflakeStreamingInges
         encryptionKey,
         encryptionKeyId,
         onErrorOption,
-        false);
+        defaultTimezone,
+        client.getParameterProvider().getBlobFormatVersion(),
+        null);
+  }
+
+  /** Default constructor */
+  SnowflakeStreamingIngestChannelInternal(
+      String name,
+      String dbName,
+      String schemaName,
+      String tableName,
+      String endOffsetToken,
+      Long channelSequencer,
+      Long rowSequencer,
+      SnowflakeStreamingIngestClientInternal<T> client,
+      String encryptionKey,
+      Long encryptionKeyId,
+      OpenChannelRequest.OnErrorOption onErrorOption,
+      ZoneId defaultTimezone,
+      Constants.BdecVersion bdecVersion,
+      OffsetTokenVerificationFunction offsetTokenVerificationFunction) {
+    this.isClosed = false;
+    this.owningClient = client;
+    this.channelFlushContext =
+        new ChannelFlushContext(
+            name, dbName, schemaName, tableName, channelSequencer, encryptionKey, encryptionKeyId);
+    this.channelState = new ChannelRuntimeState(endOffsetToken, rowSequencer, true);
+    this.rowBuffer =
+        AbstractRowBuffer.createRowBuffer(
+            onErrorOption,
+            defaultTimezone,
+            bdecVersion,
+            getFullyQualifiedName(),
+            this::collectRowSize,
+            channelState,
+            new ClientBufferParameters(owningClient),
+            offsetTokenVerificationFunction,
+            owningClient == null ? null : owningClient.getTelemetryService());
+    this.tableColumns = new HashMap<>();
+    logger.logInfo(
+        "Channel={} created for table={}",
+        this.channelFlushContext.getName(),
+        this.channelFlushContext.getTableName());
   }
 
   /**
@@ -162,8 +148,7 @@ class SnowflakeStreamingIngestChannelInternal implements SnowflakeStreamingInges
    */
   @Override
   public String getFullyQualifiedName() {
-    return String.format(
-        "%s.%s.%s.%s", this.dbName, this.schemaName, this.tableName, this.channelName);
+    return channelFlushContext.getFullyQualifiedName();
   }
 
   /**
@@ -173,50 +158,32 @@ class SnowflakeStreamingIngestChannelInternal implements SnowflakeStreamingInges
    */
   @Override
   public String getName() {
-    return this.channelName;
+    return this.channelFlushContext.getName();
   }
 
   @Override
   public String getDBName() {
-    return this.dbName;
+    return this.channelFlushContext.getDbName();
   }
 
   @Override
   public String getSchemaName() {
-    return this.schemaName;
+    return this.channelFlushContext.getSchemaName();
   }
 
   @Override
   public String getTableName() {
-    return this.tableName;
-  }
-
-  String getOffsetToken() {
-    return this.offsetToken;
-  }
-
-  void setOffsetToken(String offsetToken) {
-    this.offsetToken = offsetToken;
+    return this.channelFlushContext.getTableName();
   }
 
   Long getChannelSequencer() {
-    return this.channelSequencer;
+    return this.channelFlushContext.getChannelSequencer();
   }
 
-  long incrementAndGetRowSequencer() {
-    return this.rowSequencer.incrementAndGet();
-  }
-
-  long getRowSequencer() {
-    return this.rowSequencer.get();
-  }
-
-  String getEncryptionKey() {
-    return this.encryptionKey;
-  }
-
-  Long getEncryptionKeyId() {
-    return this.encryptionKeyId;
+  /** @return current state of the channel */
+  @VisibleForTesting
+  ChannelRuntimeState getChannelState() {
+    return this.channelState;
   }
 
   /**
@@ -226,33 +193,39 @@ class SnowflakeStreamingIngestChannelInternal implements SnowflakeStreamingInges
    */
   @Override
   public String getFullyQualifiedTableName() {
-    return String.format("%s.%s.%s", this.dbName, this.schemaName, this.tableName);
+    return channelFlushContext.getFullyQualifiedTableName();
   }
 
   /**
    * Get all the data needed to build the blob during flush
    *
+   * @param filePath the name of the file the data will be written in
    * @return a ChannelData object
    */
-  ChannelData getData() {
-    return this.arrowBuffer.flush();
+  ChannelData<T> getData(final String filePath) {
+    ChannelData<T> data = this.rowBuffer.flush(filePath);
+    if (data != null) {
+      data.setChannelContext(channelFlushContext);
+    }
+    return data;
   }
 
   /** @return a boolean to indicate whether the channel is valid or not */
   @Override
   public boolean isValid() {
-    return this.isValid;
+    return this.channelState.isValid();
   }
 
   /** Mark the channel as invalid, and release resources */
-  void invalidate() {
-    this.isValid = false;
-    this.arrowBuffer.close();
+  void invalidate(String message) {
+    this.channelState.invalidate();
+    this.rowBuffer.close("invalidate");
     logger.logWarn(
-        "Channel is invalidated, name={}, channel sequencer={}, row sequencer={}",
+        "Channel is invalidated, name={}, channel sequencer={}, row sequencer={}, message={}",
         getFullyQualifiedName(),
-        channelSequencer,
-        rowSequencer);
+        channelFlushContext.getChannelSequencer(),
+        channelState.getRowSequencer(),
+        message);
   }
 
   /** @return a boolean to indicate whether the channel is closed or not */
@@ -264,11 +237,11 @@ class SnowflakeStreamingIngestChannelInternal implements SnowflakeStreamingInges
   /** Mark the channel as closed */
   void markClosed() {
     this.isClosed = true;
-    logger.logDebug(
-        "Channel is closed, name={}, channel sequencer={}, row sequencer={}",
+    logger.logInfo(
+        "Channel is marked as closed, name={}, channel sequencer={}, row sequencer={}",
         getFullyQualifiedName(),
-        channelSequencer,
-        rowSequencer);
+        channelFlushContext.getChannelSequencer(),
+        channelState.getRowSequencer());
   }
 
   /**
@@ -281,12 +254,12 @@ class SnowflakeStreamingIngestChannelInternal implements SnowflakeStreamingInges
     // Skip this check for closing because we need to set the channel to closed first and then flush
     // in case there is any leftover rows
     if (isClosed() && !closing) {
-      throw new SFException(ErrorCode.CLOSED_CHANNEL);
+      throw new SFException(ErrorCode.CLOSED_CHANNEL, getFullyQualifiedName());
     }
 
     // Simply return if there is no data in the channel, this might not work if we support public
     // flush API since there could a concurrent insert at the same time
-    if (this.arrowBuffer.getSize() == 0) {
+    if (this.rowBuffer.getSize() == 0) {
       return CompletableFuture.completedFuture(null);
     }
 
@@ -300,6 +273,11 @@ class SnowflakeStreamingIngestChannelInternal implements SnowflakeStreamingInges
    */
   @Override
   public CompletableFuture<Void> close() {
+    return this.close(false);
+  }
+
+  @Override
+  public CompletableFuture<Void> close(boolean drop) {
     checkValidation();
 
     if (isClosed()) {
@@ -307,34 +285,34 @@ class SnowflakeStreamingIngestChannelInternal implements SnowflakeStreamingInges
     }
 
     markClosed();
-    this.owningClient.removeChannelIfSequencersMatch(this);
     return flush(true)
         .thenRunAsync(
             () -> {
-              List<SnowflakeStreamingIngestChannelInternal> uncommittedChannels =
+              List<SnowflakeStreamingIngestChannelInternal<?>> uncommittedChannels =
                   this.owningClient.verifyChannelsAreFullyCommitted(
                       Collections.singletonList(this));
 
-              this.arrowBuffer.close();
+              this.rowBuffer.close("close");
+              this.owningClient.removeChannelIfSequencersMatch(this);
 
-              // Throw an exception if the channel has any uncommitted rows
-              if (!uncommittedChannels.isEmpty()) {
+              // Throw an exception if the channel is invalid or has any uncommitted rows
+              if (!isValid() || !uncommittedChannels.isEmpty()) {
                 throw new SFException(
-                    ErrorCode.CHANNEL_WITH_UNCOMMITTED_ROWS,
+                    ErrorCode.CHANNELS_WITH_UNCOMMITTED_ROWS,
                     uncommittedChannels.stream()
                         .map(SnowflakeStreamingIngestChannelInternal::getFullyQualifiedName)
                         .collect(Collectors.toList()));
               }
+              if (drop) {
+                DropChannelRequest.DropChannelRequestBuilder builder =
+                    DropChannelRequest.builder(this.getChannelContext().getName())
+                        .setDBName(this.getDBName())
+                        .setTableName(this.getTableName())
+                        .setSchemaName(this.getSchemaName());
+                this.owningClient.dropChannel(
+                    new DropChannelVersionRequest(builder, this.getChannelSequencer()));
+              }
             });
-  }
-
-  /**
-   * Get the buffer allocator
-   *
-   * @return the buffer allocator
-   */
-  BufferAllocator getAllocator() {
-    return this.allocator;
   }
 
   /**
@@ -345,7 +323,8 @@ class SnowflakeStreamingIngestChannelInternal implements SnowflakeStreamingInges
   // TODO: need to verify with the table schema when supporting sub-columns
   void setupSchema(List<ColumnMetadata> columns) {
     logger.logDebug("Setup schema for channel={}, schema={}", getFullyQualifiedName(), columns);
-    this.arrowBuffer.setupSchema(columns);
+    this.rowBuffer.setupSchema(columns);
+    columns.forEach(c -> tableColumns.putIfAbsent(c.getName(), new ColumnProperties(c)));
   }
 
   /**
@@ -364,7 +343,7 @@ class SnowflakeStreamingIngestChannelInternal implements SnowflakeStreamingInges
    */
   @Override
   public InsertValidationResponse insertRow(Map<String, Object> row, String offsetToken) {
-    return insertRows(Collections.singletonList(row), offsetToken);
+    return insertRows(Collections.singletonList(row), offsetToken, offsetToken);
   }
 
   /**
@@ -374,33 +353,58 @@ class SnowflakeStreamingIngestChannelInternal implements SnowflakeStreamingInges
    */
 
   /**
-   * Each row is represented using Map where the key is column name and the value is a row of data
+   * Insert a batch of rows into the channel, each row is represented using Map where the key is
+   * column name and the value is a row of data. See {@link
+   * SnowflakeStreamingIngestChannel#insertRow(Map, String)} for more information about accepted
+   * values.
    *
    * @param rows object data to write
-   * @param offsetToken offset of last row in the row-set, used for replay in case of failures
+   * @param startOffsetToken start offset of the batch/row-set
+   * @param endOffsetToken end offset of the batch/row-set, used for replay in case of failures, *
+   *     It could be null if you don't plan on replaying or can't replay
    * @return insert response that possibly contains errors because of insertion failures
-   * @throws SFException when the channel is invalid or closed
    */
   @Override
   public InsertValidationResponse insertRows(
-      Iterable<Map<String, Object>> rows, String offsetToken) {
-    throttleInsertIfNeeded(Runtime.getRuntime());
+      Iterable<Map<String, Object>> rows,
+      @Nullable String startOffsetToken,
+      @Nullable String endOffsetToken) {
+    throttleInsertIfNeeded(new MemoryInfoProviderFromRuntime());
     checkValidation();
 
     if (isClosed()) {
-      throw new SFException(ErrorCode.CLOSED_CHANNEL);
+      throw new SFException(ErrorCode.CLOSED_CHANNEL, getFullyQualifiedName());
     }
 
-    InsertValidationResponse response = this.arrowBuffer.insertRows(rows, offsetToken);
+    // We create a shallow copy to protect against concurrent addition/removal of columns, which can
+    // lead to double counting of null values, for example. Individual mutable values may still be
+    // concurrently modified (e.g. byte[]). Before validation and EP calculation, we must make sure
+    // that defensive copies of all mutable objects are created.
+    final List<Map<String, Object>> rowsCopy = new LinkedList<>();
+    rows.forEach(r -> rowsCopy.add(new LinkedHashMap<>(r)));
+
+    InsertValidationResponse response =
+        this.rowBuffer.insertRows(rowsCopy, startOffsetToken, endOffsetToken);
 
     // Start flush task if the chunk size reaches a certain size
     // TODO: Checking table/chunk level size reduces throughput a lot, we may want to check it only
     // if a large number of rows are inserted
-    if (this.arrowBuffer.getSize() >= MAX_CHUNK_SIZE_IN_BYTES) {
+    if (this.rowBuffer.getSize()
+        >= this.owningClient.getParameterProvider().getMaxChannelSizeInBytes()) {
       this.owningClient.setNeedFlush();
     }
 
     return response;
+  }
+
+  /**
+   * Insert a batch of rows into the channel with the end offset token only, please see {@link
+   * SnowflakeStreamingIngestChannel#insertRows(Iterable, String, String)} for more information.
+   */
+  @Override
+  public InsertValidationResponse insertRows(
+      Iterable<Map<String, Object>> rows, String offsetToken) {
+    return insertRows(rows, null, offsetToken);
   }
 
   /** Collect the row size from row buffer if required */
@@ -411,7 +415,9 @@ class SnowflakeStreamingIngestChannelInternal implements SnowflakeStreamingInges
   }
 
   /**
-   * Get the latest committed offset token from Snowflake
+   * Get the latest committed offset token from Snowflake, an exception will be thrown if the
+   * channel becomes invalid due to errors and the channel needs to be reopened in order to return a
+   * valid offset token
    *
    * @return the latest committed offset token
    */
@@ -419,62 +425,93 @@ class SnowflakeStreamingIngestChannelInternal implements SnowflakeStreamingInges
   public String getLatestCommittedOffsetToken() {
     checkValidation();
 
-    return this.owningClient
-        .getChannelsStatus(Collections.singletonList(this))
-        .getChannels()
-        .get(0)
-        .getPersistedOffsetToken();
+    ChannelsStatusResponse.ChannelStatusResponseDTO response =
+        this.owningClient.getChannelsStatus(Collections.singletonList(this)).getChannels().get(0);
+
+    if (response.getStatusCode() != RESPONSE_SUCCESS) {
+      throw new SFException(ErrorCode.CHANNEL_STATUS_INVALID, getName(), response.getStatusCode());
+    }
+
+    return response.getPersistedOffsetToken();
   }
 
-  /**
-   * Check whether we need to throttle the insert API under the following low memory condition:
-   * <li>system free_memory/total_memory < INSERT_THROTTLE_THRESHOLD_IN_PERCENTAGE
-   */
-  void throttleInsertIfNeeded(Runtime runtime) {
+  /** Returns a map of column name -> datatype for the table the channel is bound to */
+  @Override
+  public Map<String, ColumnProperties> getTableSchema() {
+    return this.tableColumns;
+  }
+
+  /** Check whether we need to throttle the insertRows API */
+  void throttleInsertIfNeeded(MemoryInfoProvider memoryInfoProvider) {
+    int retry = 0;
+    long insertThrottleIntervalInMs =
+        this.owningClient.getParameterProvider().getInsertThrottleIntervalInMs();
+    while ((hasLowRuntimeMemory(memoryInfoProvider)
+            || (this.owningClient.getFlushService() != null
+                && this.owningClient.getFlushService().throttleDueToQueuedFlushTasks()))
+        && retry < INSERT_THROTTLE_MAX_RETRY_COUNT) {
+      try {
+        Thread.sleep(insertThrottleIntervalInMs);
+        retry++;
+      } catch (InterruptedException e) {
+        throw new SFException(ErrorCode.INTERNAL_ERROR, "Insert throttle get interrupted");
+      }
+    }
+    if (retry > 0) {
+      logger.logInfo(
+          "Insert throttled for a total of {} milliseconds, retryCount={}, client={}, channel={}",
+          retry * insertThrottleIntervalInMs,
+          retry,
+          this.owningClient.getName(),
+          getFullyQualifiedName());
+    }
+  }
+
+  /** Check whether we have a low runtime memory condition */
+  private boolean hasLowRuntimeMemory(MemoryInfoProvider memoryInfoProvider) {
+    int insertThrottleThresholdInBytes =
+        this.owningClient.getParameterProvider().getInsertThrottleThresholdInBytes();
     int insertThrottleThresholdInPercentage =
         this.owningClient.getParameterProvider().getInsertThrottleThresholdInPercentage();
-    if (runtime.freeMemory() * 100 / runtime.totalMemory() < insertThrottleThresholdInPercentage) {
-      long oldTotalMem = runtime.totalMemory();
-      long oldFreeMem = runtime.freeMemory();
-      int retry = 0;
-
-      long insertThrottleIntervalInMs =
-          this.owningClient.getParameterProvider().getInsertThrottleIntervalInMs();
-      while (runtime.freeMemory() * 100 / runtime.totalMemory()
-              < insertThrottleThresholdInPercentage
-          && retry < INSERT_THROTTLE_MAX_RETRY_COUNT) {
-        try {
-          Thread.sleep(insertThrottleIntervalInMs);
-          retry++;
-        } catch (InterruptedException e) {
-          throw new SFException(ErrorCode.INTERNAL_ERROR, "Insert throttle get interrupted");
-        }
-      }
-
+    long maxMemoryLimitInBytes =
+        this.owningClient.getParameterProvider().getMaxMemoryLimitInBytes();
+    long maxMemory =
+        maxMemoryLimitInBytes == MAX_MEMORY_LIMIT_IN_BYTES_DEFAULT
+            ? memoryInfoProvider.getMaxMemory()
+            : maxMemoryLimitInBytes;
+    long freeMemory =
+        memoryInfoProvider.getFreeMemory()
+            + (memoryInfoProvider.getMaxMemory() - memoryInfoProvider.getTotalMemory());
+    boolean hasLowRuntimeMemory =
+        freeMemory < insertThrottleThresholdInBytes
+            && freeMemory * 100 / maxMemory < insertThrottleThresholdInPercentage;
+    if (hasLowRuntimeMemory) {
       logger.logWarn(
-          "InsertRows throttled due to JVM memory pressure, channel={}, timeInMs={}, max memory={},"
-              + " old total memory={}, old free memory={}, new total memory={}, new free"
-              + " memory={}.",
-          getFullyQualifiedName(),
-          retry * insertThrottleIntervalInMs,
-          runtime.maxMemory(),
-          oldTotalMem,
-          oldFreeMem,
-          runtime.totalMemory(),
-          runtime.freeMemory());
+          "Throttled due to memory pressure, client={}, channel={}.",
+          this.owningClient.getName(),
+          getFullyQualifiedName());
+      Utils.showMemory();
     }
+    return hasLowRuntimeMemory;
   }
 
   /** Check whether the channel is still valid, cleanup and throw an error if not */
   private void checkValidation() {
     if (!isValid()) {
       this.owningClient.removeChannelIfSequencersMatch(this);
-      this.arrowBuffer.close();
-      throw new SFException(ErrorCode.INVALID_CHANNEL);
+      this.rowBuffer.close("checkValidation");
+      throw new SFException(ErrorCode.INVALID_CHANNEL, getFullyQualifiedName());
     }
   }
 
-  OpenChannelRequest.OnErrorOption getOnErrorOption() {
-    return this.onErrorOption;
+  /** Returns underlying channel's row buffer implementation. */
+  RowBuffer<T> getRowBuffer() {
+    return rowBuffer;
+  }
+
+  /** Returns underlying channel's attributes. */
+  @VisibleForTesting
+  public ChannelFlushContext getChannelContext() {
+    return channelFlushContext;
   }
 }

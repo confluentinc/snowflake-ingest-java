@@ -15,10 +15,13 @@ class ChunkMetadata {
   private final String tableName;
   private Long chunkStartOffset;
   private final Integer chunkLength;
+  private final Integer uncompressedChunkLength;
   private final List<ChannelMetadata> channels;
   private final String chunkMD5;
   private final EpInfo epInfo;
   private final Long encryptionKeyId;
+  private final Long firstInsertTimeInMs;
+  private final Long lastInsertTimeInMs;
 
   static Builder builder() {
     return new Builder();
@@ -30,16 +33,21 @@ class ChunkMetadata {
     private String schemaName;
     private String tableName;
     private Long chunkStartOffset;
-    private Integer chunkLength;
+    private Integer chunkLength; // compressedChunkLength
+
+    private Integer uncompressedChunkLength;
+
     private List<ChannelMetadata> channels;
     private String chunkMD5;
     private EpInfo epInfo;
     private Long encryptionKeyId;
+    private Long firstInsertTimeInMs;
+    private Long lastInsertTimeInMs;
 
-    Builder setOwningTable(SnowflakeStreamingIngestChannelInternal channel) {
-      this.dbName = channel.getDBName();
-      this.schemaName = channel.getSchemaName();
-      this.tableName = channel.getTableName();
+    Builder setOwningTableFromChannelContext(ChannelFlushContext channelFlushContext) {
+      this.dbName = channelFlushContext.getDbName();
+      this.schemaName = channelFlushContext.getSchemaName();
+      this.tableName = channelFlushContext.getTableName();
       return this;
     }
 
@@ -58,6 +66,15 @@ class ChunkMetadata {
       return this;
     }
 
+    /**
+     * Currently we send estimated uncompressed size that is close to the actual parquet data size
+     * and mostly about user data but parquet encoding overhead may be slightly different.
+     */
+    public Builder setUncompressedChunkLength(Integer uncompressedChunkLength) {
+      this.uncompressedChunkLength = uncompressedChunkLength;
+      return this;
+    }
+
     Builder setChannelList(List<ChannelMetadata> channels) {
       this.channels = channels;
       return this;
@@ -70,6 +87,16 @@ class ChunkMetadata {
 
     Builder setEncryptionKeyId(Long encryptionKeyId) {
       this.encryptionKeyId = encryptionKeyId;
+      return this;
+    }
+
+    Builder setFirstInsertTimeInMs(Long firstInsertTimeInMs) {
+      this.firstInsertTimeInMs = firstInsertTimeInMs;
+      return this;
+    }
+
+    Builder setLastInsertTimeInMs(Long lastInsertTimeInMs) {
+      this.lastInsertTimeInMs = lastInsertTimeInMs;
       return this;
     }
 
@@ -88,16 +115,21 @@ class ChunkMetadata {
     Utils.assertNotNull("chunk MD5", builder.chunkMD5);
     Utils.assertNotNull("chunk ep info", builder.epInfo);
     Utils.assertNotNull("encryption key id", builder.encryptionKeyId);
+    Utils.assertNotNull("chunk first insert time in ms", builder.firstInsertTimeInMs);
+    Utils.assertNotNull("chunk last insert time in ms", builder.lastInsertTimeInMs);
 
     this.dbName = builder.dbName;
     this.schemaName = builder.schemaName;
     this.tableName = builder.tableName;
     this.chunkStartOffset = builder.chunkStartOffset;
     this.chunkLength = builder.chunkLength;
+    this.uncompressedChunkLength = builder.uncompressedChunkLength;
     this.channels = builder.channels;
     this.chunkMD5 = builder.chunkMD5;
     this.epInfo = builder.epInfo;
     this.encryptionKeyId = builder.encryptionKeyId;
+    this.firstInsertTimeInMs = builder.firstInsertTimeInMs;
+    this.lastInsertTimeInMs = builder.lastInsertTimeInMs;
   }
 
   /**
@@ -134,6 +166,11 @@ class ChunkMetadata {
     return chunkLength;
   }
 
+  @JsonProperty("chunk_length_uncompressed")
+  public Integer getUncompressedChunkLength() {
+    return uncompressedChunkLength;
+  }
+
   @JsonProperty("channels")
   List<ChannelMetadata> getChannels() {
     return this.channels;
@@ -152,5 +189,15 @@ class ChunkMetadata {
   @JsonProperty("encryption_key_id")
   Long getEncryptionKeyId() {
     return this.encryptionKeyId;
+  }
+
+  @JsonProperty("first_insert_time_in_ms")
+  Long getFirstInsertTimeInMs() {
+    return this.firstInsertTimeInMs;
+  }
+
+  @JsonProperty("last_insert_time_in_ms")
+  Long getLastInsertTimeInMs() {
+    return this.lastInsertTimeInMs;
   }
 }

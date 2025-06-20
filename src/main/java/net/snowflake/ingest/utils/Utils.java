@@ -4,41 +4,89 @@
 
 package net.snowflake.ingest.utils;
 
-import static net.snowflake.ingest.utils.Constants.JDBC_PRIVATE_KEY;
-import static net.snowflake.ingest.utils.Constants.ROLE;
-import static net.snowflake.ingest.utils.Constants.SSL;
 import static net.snowflake.ingest.utils.Constants.USER;
 
 import com.codahale.metrics.Timer;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.netty.util.internal.PlatformDependent;
 import java.io.StringReader;
+import java.lang.management.BufferPoolMXBean;
+import java.lang.management.ManagementFactory;
+import java.lang.management.MemoryUsage;
+import java.lang.reflect.InvocationTargetException;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
+import java.security.Provider;
 import java.security.PublicKey;
 import java.security.Security;
 import java.security.interfaces.RSAPrivateCrtKey;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.RSAPublicKeySpec;
+import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Properties;
-import net.snowflake.client.jdbc.internal.org.bouncycastle.asn1.pkcs.PrivateKeyInfo;
-import net.snowflake.client.jdbc.internal.org.bouncycastle.jce.provider.BouncyCastleProvider;
-import net.snowflake.client.jdbc.internal.org.bouncycastle.openssl.PEMParser;
-import net.snowflake.client.jdbc.internal.org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
-import net.snowflake.client.jdbc.internal.org.bouncycastle.openssl.jcajce.JceOpenSSLPKCS8DecryptorProviderBuilder;
-import net.snowflake.client.jdbc.internal.org.bouncycastle.operator.InputDecryptorProvider;
-import net.snowflake.client.jdbc.internal.org.bouncycastle.pkcs.PKCS8EncryptedPrivateKeyInfo;
-import org.apache.arrow.memory.BufferAllocator;
+import net.snowflake.client.core.SFSessionProperty;
 import org.apache.commons.codec.binary.Base64;
+import org.bouncycastle.asn1.pkcs.PrivateKeyInfo;
+import org.bouncycastle.openssl.PEMParser;
+import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
+import org.bouncycastle.openssl.jcajce.JceOpenSSLPKCS8DecryptorProviderBuilder;
+import org.bouncycastle.operator.InputDecryptorProvider;
+import org.bouncycastle.pkcs.PKCS8EncryptedPrivateKeyInfo;
 
 /** Contains Ingest related utility functions */
 public class Utils {
 
   private static final Logging logger = new Logging(Utils.class);
+
+  private static final String DEFAULT_SECURITY_PROVIDER_NAME =
+      "org.bouncycastle.jce.provider.BouncyCastleProvider";
+
+  /** provider name */
+  private static final String BOUNCY_CASTLE_PROVIDER = "BC";
+  /** provider name for FIPS */
+  private static final String BOUNCY_CASTLE_FIPS_PROVIDER = "BCFIPS";
+
+  static {
+    // Add Bouncy Castle to the security provider. This is required to
+    // verify the signature on OCSP response and attached certificates.
+    if (Security.getProvider(BOUNCY_CASTLE_PROVIDER) == null
+        && Security.getProvider(BOUNCY_CASTLE_FIPS_PROVIDER) == null) {
+      Security.addProvider(instantiateSecurityProvider());
+    }
+  }
+
+  public static Provider getProvider() {
+    final Provider bcProvider = Security.getProvider(BOUNCY_CASTLE_PROVIDER);
+    if (bcProvider != null) {
+      return bcProvider;
+    }
+    final Provider bcFipsProvider = Security.getProvider(BOUNCY_CASTLE_FIPS_PROVIDER);
+    if (bcFipsProvider != null) {
+      return bcFipsProvider;
+    }
+    throw new SFException(ErrorCode.INTERNAL_ERROR, "No security provider found");
+  }
+
+  private static Provider instantiateSecurityProvider() {
+    try {
+      logger.logInfo("Adding security provider {}", DEFAULT_SECURITY_PROVIDER_NAME);
+      Class klass = Class.forName(DEFAULT_SECURITY_PROVIDER_NAME);
+      return (Provider) klass.getDeclaredConstructor().newInstance();
+    } catch (ExceptionInInitializerError
+        | ClassNotFoundException
+        | NoSuchMethodException
+        | InstantiationException
+        | IllegalAccessException
+        | IllegalArgumentException
+        | InvocationTargetException
+        | SecurityException ex) {
+      throw new SFException(
+          ErrorCode.CRYPTO_PROVIDER_ERROR, DEFAULT_SECURITY_PROVIDER_NAME, ex.getMessage());
+    }
+  }
 
   /**
    * Assert when the String is null or Empty
@@ -70,10 +118,9 @@ public class Utils {
    * Create a Properties for snowflake connection
    *
    * @param inputProp input property map
-   * @param sslEnabled if ssl is enabled
    * @return a Properties instance
    */
-  public static Properties createProperties(Properties inputProp, boolean sslEnabled) {
+  public static Properties createProperties(Properties inputProp) {
     Properties properties = new Properties();
 
     // decrypt rsa key
@@ -91,67 +138,102 @@ public class Utils {
         case Constants.PRIVATE_KEY_PASSPHRASE:
           privateKeyPassphrase = val;
           break;
-        case Constants.USER:
-          properties.put(USER, val);
-          break;
-        case Constants.ROLE:
-          properties.put(ROLE, val);
-          break;
         default:
-          properties.put(key, val);
+          // Preserve case for proxy-related properties that HttpUtil expects
+          if (isProxyRelatedProperty(key)) {
+            properties.put(key, val);
+          } else {
+            properties.put(key.toLowerCase(), val);
+          }
       }
     }
 
     if (!privateKeyPassphrase.isEmpty()) {
-      properties.put(JDBC_PRIVATE_KEY, parseEncryptedPrivateKey(privateKey, privateKeyPassphrase));
+      properties.put(
+          SFSessionProperty.PRIVATE_KEY.getPropertyKey(),
+          parseEncryptedPrivateKey(privateKey, privateKeyPassphrase));
     } else if (!privateKey.isEmpty()) {
-      properties.put(JDBC_PRIVATE_KEY, parsePrivateKey(privateKey));
+      properties.put(SFSessionProperty.PRIVATE_KEY.getPropertyKey(), parsePrivateKey(privateKey));
     }
 
-    // set ssl
-    if (sslEnabled) {
-      properties.put(SSL, "on");
+    // Use JWT if authorization type not specified
+    if (!properties.containsKey(Constants.AUTHORIZATION_TYPE)) {
+      properties.put(Constants.AUTHORIZATION_TYPE, Constants.JWT);
+    }
+
+    String authType = properties.get(Constants.AUTHORIZATION_TYPE).toString();
+    if (authType.equals(Constants.JWT)) {
+      if (!properties.containsKey(SFSessionProperty.PRIVATE_KEY.getPropertyKey())) {
+        throw new SFException(ErrorCode.MISSING_CONFIG, Constants.PRIVATE_KEY);
+      }
+    } else if (authType.equals(Constants.OAUTH)) {
+      if (!properties.containsKey(Constants.OAUTH_CLIENT_ID)) {
+        throw new SFException(ErrorCode.MISSING_CONFIG, Constants.OAUTH_CLIENT_ID);
+      }
+      if (!properties.containsKey(Constants.OAUTH_CLIENT_SECRET)) {
+        throw new SFException(ErrorCode.MISSING_CONFIG, Constants.OAUTH_CLIENT_SECRET);
+      }
+      if (!properties.containsKey(Constants.OAUTH_REFRESH_TOKEN)) {
+        throw new SFException(ErrorCode.MISSING_CONFIG, Constants.OAUTH_REFRESH_TOKEN);
+      }
     } else {
-      properties.put(SSL, "off");
-    }
-
-    if (!properties.containsKey(JDBC_PRIVATE_KEY)) {
-      throw new SFException(ErrorCode.MISSING_CONFIG, "private_key");
+      throw new SFException(
+          ErrorCode.INVALID_CONFIG_PARAMETER,
+          String.format("authorization_type, should be %s or %s", Constants.JWT, Constants.OAUTH));
     }
 
     if (!properties.containsKey(USER)) {
       throw new SFException(ErrorCode.MISSING_CONFIG, "user");
     }
 
+    if (!properties.containsKey(Constants.ACCOUNT_URL)) {
+      if (!properties.containsKey(Constants.HOST)) {
+        throw new SFException(ErrorCode.MISSING_CONFIG, "host");
+      }
+      if (!properties.containsKey(Constants.SCHEME)) {
+        throw new SFException(ErrorCode.MISSING_CONFIG, "scheme");
+      }
+      if (!properties.containsKey(Constants.PORT)) {
+        throw new SFException(ErrorCode.MISSING_CONFIG, "port");
+      }
+
+      properties.put(
+          Constants.ACCOUNT_URL,
+          Utils.constructAccountUrl(
+              properties.get(Constants.SCHEME).toString(),
+              properties.get(Constants.HOST).toString(),
+              Integer.parseInt(properties.get(Constants.PORT).toString())));
+    }
+
+    if (!properties.containsKey(Constants.ROLE)) {
+      logger.logInfo("Snowflake role is not provided, the default user role will be applied.");
+    }
+
+    /**
+     * Behavior change in JDBC release 3.13.25
+     *
+     * @see <a href="https://community.snowflake.com/s/article/JDBC-Driver-Release-Notes">Snowflake
+     *     Documentation Release Notes </a>
+     */
+    properties.put(SFSessionProperty.ALLOW_UNDERSCORES_IN_HOST.getPropertyKey(), "true");
+
     return properties;
+  }
+
+  /** Check if a property key is proxy-related and should preserve its case */
+  private static boolean isProxyRelatedProperty(String key) {
+    return key.equals(SFSessionProperty.USE_PROXY.getPropertyKey())
+        || key.equals(SFSessionProperty.PROXY_HOST.getPropertyKey())
+        || key.equals(SFSessionProperty.PROXY_PORT.getPropertyKey())
+        || key.equals(SFSessionProperty.PROXY_USER.getPropertyKey())
+        || key.equals(SFSessionProperty.PROXY_PASSWORD.getPropertyKey())
+        || key.equals(SFSessionProperty.NON_PROXY_HOSTS.getPropertyKey())
+        || key.equals(SFSessionProperty.PROXY_PROTOCOL.getPropertyKey());
   }
 
   /** Construct account url from input schema, host and port */
   public static String constructAccountUrl(String scheme, String host, int port) {
     return String.format("%s://%s:%d", scheme, host, port);
-  }
-
-  /** Get the properties out from a json node */
-  public static Properties getPropertiesFromJson(ObjectNode json) {
-    Properties props = new Properties();
-    Optional.ofNullable(json.get(Constants.USER))
-        .ifPresent(u -> props.put(Constants.USER, u.asText()));
-    Optional.ofNullable(json.get(Constants.PRIVATE_KEY))
-        .ifPresent(u -> props.put(Constants.PRIVATE_KEY, u.asText()));
-    Optional.ofNullable(json.get(Constants.ROLE)).ifPresent(u -> props.put(ROLE, u.asText()));
-    Optional.ofNullable(json.get(Constants.PRIVATE_KEY_PASSPHRASE))
-        .ifPresent(u -> props.put(Constants.PRIVATE_KEY_PASSPHRASE, u.asText()));
-
-    Optional.ofNullable(json.get(Constants.SCHEME))
-        .ifPresent(u -> props.put(Constants.SCHEME, u.asText()));
-    Optional.ofNullable(json.get(Constants.HOST))
-        .ifPresent(u -> props.put(Constants.HOST, u.asText()));
-    Optional.ofNullable(json.get(Constants.PORT))
-        .ifPresent(u -> props.put(Constants.PORT, u.asInt()));
-    Optional.ofNullable(json.get(Constants.ACCOUNT_URL))
-        .ifPresent(u -> props.put(Constants.ACCOUNT_URL, u.asText()));
-
-    return props;
   }
 
   /**
@@ -165,7 +247,6 @@ public class Utils {
     key = key.replaceAll("-+[A-Za-z ]+-+", "");
     key = key.replaceAll("\\s", "");
 
-    java.security.Security.addProvider(new BouncyCastleProvider());
     byte[] encoded = Base64.decodeBase64(key);
     try {
       KeyFactory kf = KeyFactory.getInstance("RSA");
@@ -198,7 +279,6 @@ public class Utils {
     }
     builder.append("\n-----END ENCRYPTED PRIVATE KEY-----");
     key = builder.toString();
-    Security.addProvider(new BouncyCastleProvider());
     try {
       PEMParser pemParser = new PEMParser(new StringReader(key));
       PKCS8EncryptedPrivateKeyInfo encryptedPrivateKeyInfo =
@@ -207,7 +287,7 @@ public class Utils {
       InputDecryptorProvider pkcs8Prov =
           new JceOpenSSLPKCS8DecryptorProviderBuilder().build(passphrase.toCharArray());
       JcaPEMKeyConverter converter =
-          new JcaPEMKeyConverter().setProvider(BouncyCastleProvider.PROVIDER_NAME);
+          new JcaPEMKeyConverter().setProvider(Utils.getProvider().getName());
       PrivateKeyInfo decryptedPrivateKeyInfo =
           encryptedPrivateKeyInfo.decryptPrivateKeyInfo(pkcs8Prov);
       return converter.getPrivateKey(decryptedPrivateKeyInfo);
@@ -266,18 +346,57 @@ public class Utils {
     };
   }
 
-  /** Utility function to check whether a streing is null or empty */
+  /** Utility function to check whether a string is null or empty */
   public static boolean isNullOrEmpty(String string) {
     return string == null || string.isEmpty();
   }
 
-  /** Release any outstanding memory and then close the buffer allocator */
-  public static void closeAllocator(BufferAllocator alloc) {
-    for (BufferAllocator childAlloc : alloc.getChildAllocators()) {
-      childAlloc.releaseBytes(childAlloc.getAllocatedMemory());
-      childAlloc.close();
+  /** Util function to show memory usage info and debug memory issue in the SDK */
+  public static void showMemory() {
+    List<BufferPoolMXBean> pools = ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class);
+    for (BufferPoolMXBean pool : pools) {
+      logger.logInfo(
+          "Pool name={}, pool count={}, memory used={}, total capacity={}",
+          pool.getName(),
+          pool.getCount(),
+          pool.getMemoryUsed(),
+          pool.getTotalCapacity());
     }
-    alloc.releaseBytes(alloc.getAllocatedMemory());
-    alloc.close();
+
+    Runtime runtime = Runtime.getRuntime();
+    logger.logInfo(
+        "Max direct memory={}, max runtime memory={}, total runtime memory={}, free runtime"
+            + " memory={}",
+        PlatformDependent.maxDirectMemory(),
+        runtime.maxMemory(),
+        runtime.totalMemory(),
+        runtime.freeMemory());
+
+    MemoryUsage nonHeapMem = ManagementFactory.getMemoryMXBean().getNonHeapMemoryUsage();
+    logger.logInfo(
+        "Non-heap memory usage max={}, used={}, committed={}",
+        nonHeapMem.getMax(),
+        nonHeapMem.getUsed(),
+        nonHeapMem.getCommitted());
+
+    MemoryUsage heapMem = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
+    logger.logInfo(
+        "Heap memory usage max={}, used={}, committed={}",
+        heapMem.getMax(),
+        heapMem.getUsed(),
+        heapMem.getCommitted());
+  }
+
+  /** Return the stack trace for a given exception */
+  public static String getStackTrace(Throwable e) {
+    if (e == null) {
+      return null;
+    }
+
+    StringBuilder stackTrace = new StringBuilder();
+    for (StackTraceElement element : e.getStackTrace()) {
+      stackTrace.append(System.lineSeparator()).append(element.toString());
+    }
+    return stackTrace.toString();
   }
 }

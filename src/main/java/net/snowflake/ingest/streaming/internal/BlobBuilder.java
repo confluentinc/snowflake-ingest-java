@@ -8,23 +8,30 @@ import static net.snowflake.ingest.utils.Constants.BLOB_CHECKSUM_SIZE_IN_BYTES;
 import static net.snowflake.ingest.utils.Constants.BLOB_CHUNK_METADATA_LENGTH_SIZE_IN_BYTES;
 import static net.snowflake.ingest.utils.Constants.BLOB_EXTENSION_TYPE;
 import static net.snowflake.ingest.utils.Constants.BLOB_FILE_SIZE_SIZE_IN_BYTES;
-import static net.snowflake.ingest.utils.Constants.BLOB_FORMAT_VERSION;
 import static net.snowflake.ingest.utils.Constants.BLOB_NO_HEADER;
 import static net.snowflake.ingest.utils.Constants.BLOB_TAG_SIZE_IN_BYTES;
 import static net.snowflake.ingest.utils.Constants.BLOB_VERSION_SIZE_IN_BYTES;
-import static net.snowflake.ingest.utils.Constants.COMPRESS_BLOB_TWICE;
 import static net.snowflake.ingest.utils.Utils.toByteArray;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.zip.GZIPOutputStream;
-import javax.xml.bind.DatatypeConverter;
+import java.util.zip.CRC32;
+import javax.crypto.BadPaddingException;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
+import net.snowflake.ingest.utils.Constants;
+import net.snowflake.ingest.utils.Cryptor;
 import net.snowflake.ingest.utils.Logging;
+import net.snowflake.ingest.utils.Pair;
+import org.apache.commons.codec.binary.Hex;
 
 /**
  * Build a single blob file that contains file header plus data. The header will be a
@@ -39,8 +46,8 @@ import net.snowflake.ingest.utils.Logging;
  *   <li>variable size chunks metadata in json format
  * </ul>
  *
- * <p>After the metadata, it will be one or more chunks of variable size Arrow data, and each chunk
- * will be encrypted and compressed separately.
+ * <p>After the metadata, it will be one or more chunks of variable size Parquet data, and each
+ * chunk will be encrypted and compressed separately.
  */
 class BlobBuilder {
 
@@ -48,61 +55,139 @@ class BlobBuilder {
   private static final Logging logger = new Logging(BlobBuilder.class);
 
   /**
-   * Gzip compress the given chunk data
+   * Builds blob.
    *
-   * @param filePath blob file full path
-   * @param chunkData uncompressed chunk data
-   * @return compressed chunk data
-   * @throws IOException
+   * @param filePath Path of the destination file in cloud storage
+   * @param blobData All the data for one blob. Assumes that all ChannelData in the inner List
+   *     belongs to the same table. Will error if this is not the case
+   * @param bdecVersion version of blob
+   * @return {@link Blob} data
    */
-  static byte[] compress(String filePath, ByteArrayOutputStream chunkData) throws IOException {
-    int uncompressedSize = chunkData.size();
-    ByteArrayOutputStream compressedOutputStream = new ByteArrayOutputStream(uncompressedSize);
-    try (GZIPOutputStream gzipOutputStream = new GZIPOutputStream(compressedOutputStream, true)) {
-      gzipOutputStream.write(chunkData.toByteArray());
-    }
-    int firstCompressedSize = compressedOutputStream.size();
+  static <T> Blob constructBlobAndMetadata(
+      String filePath, List<List<ChannelData<T>>> blobData, Constants.BdecVersion bdecVersion)
+      throws IOException, NoSuchPaddingException, NoSuchAlgorithmException,
+          InvalidAlgorithmParameterException, InvalidKeyException, IllegalBlockSizeException,
+          BadPaddingException {
+    List<ChunkMetadata> chunksMetadataList = new ArrayList<>();
+    List<byte[]> chunksDataList = new ArrayList<>();
+    long curDataSize = 0L;
+    CRC32 crc = new CRC32();
 
-    // Based on current experiment, compressing twice will give us the best compression
-    // ratio and compression time combination
-    int doubleCompressedSize = 0;
-    if (COMPRESS_BLOB_TWICE) {
-      ByteArrayOutputStream doubleCompressedOutputStream =
-          new ByteArrayOutputStream(firstCompressedSize);
-      try (GZIPOutputStream doubleGzipOutputStream =
-          new GZIPOutputStream(doubleCompressedOutputStream, true)) {
-        doubleGzipOutputStream.write(compressedOutputStream.toByteArray());
+    // TODO: channels with different schema can't be combined even if they belongs to same table
+    for (List<ChannelData<T>> channelsDataPerTable : blobData) {
+      ChannelFlushContext firstChannelFlushContext =
+          channelsDataPerTable.get(0).getChannelContext();
+
+      Flusher<T> flusher = channelsDataPerTable.get(0).createFlusher();
+      Flusher.SerializationResult serializedChunk =
+          flusher.serialize(channelsDataPerTable, filePath);
+
+      if (!serializedChunk.channelsMetadataList.isEmpty()) {
+        ByteArrayOutputStream chunkData = serializedChunk.chunkData;
+        Pair<byte[], Integer> paddedChunk =
+            padChunk(chunkData, Constants.ENCRYPTION_ALGORITHM_BLOCK_SIZE_BYTES);
+        byte[] paddedChunkData = paddedChunk.getFirst();
+        int paddedChunkLength = paddedChunk.getSecond();
+
+        // Encrypt the compressed chunk data, the encryption key is derived using the key from
+        // server with the full blob path.
+        // We need to maintain IV as a block counter for the whole file, even interleaved,
+        // to align with decryption on the Snowflake query path.
+        // TODO: address alignment for the header SNOW-557866
+        long iv = curDataSize / Constants.ENCRYPTION_ALGORITHM_BLOCK_SIZE_BYTES;
+        byte[] encryptedCompressedChunkData =
+            Cryptor.encrypt(
+                paddedChunkData, firstChannelFlushContext.getEncryptionKey(), filePath, iv);
+
+        // Compute the md5 of the chunk data
+        String md5 = computeMD5(encryptedCompressedChunkData, paddedChunkLength);
+        int encryptedCompressedChunkDataSize = encryptedCompressedChunkData.length;
+
+        // Create chunk metadata
+        long startOffset = curDataSize;
+        ChunkMetadata chunkMetadata =
+            ChunkMetadata.builder()
+                .setOwningTableFromChannelContext(firstChannelFlushContext)
+                // The start offset will be updated later in BlobBuilder#build to include the blob
+                // header
+                .setChunkStartOffset(startOffset)
+                // The paddedChunkLength is used because it is the actual data size used for
+                // decompression and md5 calculation on server side.
+                .setChunkLength(paddedChunkLength)
+                .setUncompressedChunkLength((int) serializedChunk.chunkEstimatedUncompressedSize)
+                .setChannelList(serializedChunk.channelsMetadataList)
+                .setChunkMD5(md5)
+                .setEncryptionKeyId(firstChannelFlushContext.getEncryptionKeyId())
+                .setEpInfo(
+                    AbstractRowBuffer.buildEpInfoFromStats(
+                        serializedChunk.rowCount, serializedChunk.columnEpStatsMapCombined))
+                .setFirstInsertTimeInMs(serializedChunk.chunkMinMaxInsertTimeInMs.getFirst())
+                .setLastInsertTimeInMs(serializedChunk.chunkMinMaxInsertTimeInMs.getSecond())
+                .build();
+
+        // Add chunk metadata and data to the list
+        chunksMetadataList.add(chunkMetadata);
+        chunksDataList.add(encryptedCompressedChunkData);
+        curDataSize += encryptedCompressedChunkDataSize;
+        crc.update(encryptedCompressedChunkData, 0, encryptedCompressedChunkDataSize);
+
+        logger.logInfo(
+            "Finish building chunk in blob={}, table={}, rowCount={}, startOffset={},"
+                + " estimatedUncompressedSize={}, paddedChunkLength={}, encryptedCompressedSize={},"
+                + " bdecVersion={}",
+            filePath,
+            firstChannelFlushContext.getFullyQualifiedTableName(),
+            serializedChunk.rowCount,
+            startOffset,
+            serializedChunk.chunkEstimatedUncompressedSize,
+            paddedChunkLength,
+            encryptedCompressedChunkDataSize,
+            bdecVersion);
       }
-      doubleCompressedSize = doubleCompressedOutputStream.size();
-      compressedOutputStream = doubleCompressedOutputStream;
     }
 
-    logger.logDebug(
-        "Finish compressing chunk in blob={}, uncompressedSize={}, firstCompressedSize={},"
-            + " doubleCompressedSize={}",
-        filePath,
-        uncompressedSize,
-        firstCompressedSize,
-        doubleCompressedSize);
-
-    return compressedOutputStream.toByteArray();
+    // Build blob file bytes
+    byte[] blobBytes =
+        buildBlob(chunksMetadataList, chunksDataList, crc.getValue(), curDataSize, bdecVersion);
+    return new Blob(blobBytes, chunksMetadataList, new BlobStats());
   }
 
   /**
-   * Build the blob file
+   * Pad the compressed data for encryption. Encryption needs padding to the
+   * ENCRYPTION_ALGORITHM_BLOCK_SIZE_BYTES to align with decryption on the Snowflake query path
+   * starting from this chunk offset.
+   *
+   * @param chunkData uncompressed chunk data
+   * @param blockSizeToAlignTo block size to align to for encryption
+   * @return padded compressed chunk data, aligned to blockSizeToAlignTo, and actual length of
+   *     compressed data before padding at the end
+   * @throws IOException
+   */
+  static Pair<byte[], Integer> padChunk(ByteArrayOutputStream chunkData, int blockSizeToAlignTo)
+      throws IOException {
+    int actualSize = chunkData.size();
+    int paddingSize = blockSizeToAlignTo - actualSize % blockSizeToAlignTo;
+    chunkData.write(new byte[paddingSize]);
+    return new Pair<>(chunkData.toByteArray(), actualSize);
+  }
+
+  /**
+   * Build the blob file bytes
    *
    * @param chunksMetadataList List of chunk metadata
    * @param chunksDataList List of chunk data
    * @param chunksChecksum Checksum for the chunk data portion
    * @param chunksDataSize Total size for the chunk data portion after compression
+   * @param bdecVersion BDEC file version
    * @return The blob file as a byte array
    * @throws JsonProcessingException
    */
-  static byte[] build(
+  static byte[] buildBlob(
       List<ChunkMetadata> chunksMetadataList,
       List<byte[]> chunksDataList,
       long chunksChecksum,
-      long chunksDataSize)
+      long chunksDataSize,
+      Constants.BdecVersion bdecVersion)
       throws IOException {
     byte[] chunkMetadataListInBytes = MAPPER.writeValueAsBytes(chunksMetadataList);
 
@@ -120,17 +205,17 @@ class BlobBuilder {
     ByteArrayOutputStream blob = new ByteArrayOutputStream();
     if (!BLOB_NO_HEADER) {
       blob.write(BLOB_EXTENSION_TYPE.getBytes());
-      blob.write(BLOB_FORMAT_VERSION);
+      blob.write(bdecVersion.toByte());
       blob.write(toByteArray(metadataSize + chunksDataSize));
       blob.write(toByteArray(chunksChecksum));
       blob.write(toByteArray(chunkMetadataListInBytes.length));
       blob.write(chunkMetadataListInBytes);
     }
-    for (byte[] arrowData : chunksDataList) {
-      blob.write(arrowData);
+    for (byte[] chunkData : chunksDataList) {
+      blob.write(chunkData);
     }
 
-    // We need to update the start offset for the EP and Arrow data in the request since
+    // We need to update the start offset for the EP and Parquet data in the request since
     // some metadata was added at the beginning
     for (ChunkMetadata chunkMetadata : chunksMetadataList) {
       chunkMetadata.advanceStartOffset(metadataSize);
@@ -165,6 +250,19 @@ class BlobBuilder {
         MessageDigest.getInstance("MD5");
     md.update(data, 0, length);
     byte[] digest = md.digest();
-    return DatatypeConverter.printHexBinary(digest).toLowerCase();
+    return Hex.encodeHexString(digest);
+  }
+
+  /** Blob data to store in a file and register by server side. */
+  static class Blob {
+    final byte[] blobBytes;
+    final List<ChunkMetadata> chunksMetadataList;
+    final BlobStats blobStats;
+
+    Blob(byte[] blobBytes, List<ChunkMetadata> chunksMetadataList, BlobStats blobStats) {
+      this.blobBytes = blobBytes;
+      this.chunksMetadataList = chunksMetadataList;
+      this.blobStats = blobStats;
+    }
   }
 }

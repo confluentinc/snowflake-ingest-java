@@ -11,6 +11,7 @@ import java.util.Map;
 /** Column metadata for each column in a Snowflake table */
 class ColumnMetadata {
   private String name;
+  private String internalName;
   private String type;
   private String logicalType;
   private String physicalType;
@@ -21,9 +22,16 @@ class ColumnMetadata {
   private boolean nullable;
   private String collation;
 
+  /**
+   * The column ordinal is an internal id of the column used by server scanner for the column
+   * identification.
+   */
+  private Integer ordinal;
+
   @JsonProperty("name")
   void setName(String name) {
     this.name = name;
+    this.internalName = LiteralQuoteUtils.unquoteColumnName(name);
   }
 
   String getName() {
@@ -109,6 +117,19 @@ class ColumnMetadata {
 
   boolean getNullable() {
     return this.nullable;
+  }
+
+  @JsonProperty("ordinal")
+  void setOrdinal(Integer ordinal) {
+    this.ordinal = ordinal;
+  }
+
+  public Integer getOrdinal() {
+    return ordinal;
+  }
+
+  String getInternalName() {
+    return internalName;
   }
 
   @Override
