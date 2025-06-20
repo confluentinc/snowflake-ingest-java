@@ -33,7 +33,7 @@ GO_LICENSE = "The Go license"
 BOUNCY_CASTLE_LICENSE = "Bouncy Castle Licence <https://www.bouncycastle.org/licence.html>"
 
 # The SDK does not need to include licenses of dependencies, which aren't shaded
-IGNORED_DEPENDENCIES = {"net.snowflake:snowflake-jdbc", "org.slf4j:slf4j-api"}
+IGNORED_DEPENDENCIES = {"net.snowflake:snowflake-jdbc", "org.slf4j:slf4j-api", "io.confluent:connect-utils"}
 
 # List of dependencies, which don't ship with a license file.
 # Only add a new record here after verifying that the dependency JAR does not contain a license!
@@ -61,6 +61,9 @@ ADDITIONAL_LICENSES_MAP = {
     "org.bouncycastle:bcpkix-jdk18on": BOUNCY_CASTLE_LICENSE,
     "org.bouncycastle:bcutil-jdk18on": BOUNCY_CASTLE_LICENSE,
     "org.bouncycastle:bcprov-jdk18on": BOUNCY_CASTLE_LICENSE,
+    "org.apache.kafka:connect-api": APACHE_LICENSE,
+    "org.apache.kafka:kafka-clients": APACHE_LICENSE,
+    "org.lz4:lz4-java": APACHE_LICENSE,
 }
 
 
