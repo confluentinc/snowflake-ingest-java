@@ -172,8 +172,8 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
     this.parameterProvider = new ParameterProvider(parameterOverrides, prop);
     this.originalProperties = prop;
     this.internalParameterProvider =
-            new InternalParameterProvider(
-                    parameterProvider.isEnableIcebergStreaming(), false /* enableNDVCount */);
+        new InternalParameterProvider(
+            parameterProvider.isEnableIcebergStreaming(), false /* enableNDVCount */);
 
     this.name = name;
     String accountName = accountURL == null ? null : accountURL.getAccount();
@@ -1093,7 +1093,6 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
     }
   }
 
-
   /**
    * Extract proxy properties from the original Properties object
    *
@@ -1101,7 +1100,6 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
    */
   Properties getProxyProperties() {
     Properties proxyProperties = new Properties();
-
 
     if (this.originalProperties != null) {
 
@@ -1124,14 +1122,13 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
 
     // If no proxy properties found in original properties, fall back to system properties
     if (proxyProperties.isEmpty()) {
-      logger.logInfo("Falling back to system properties for proxy configuration for client: {}", this.name);
+      logger.logInfo(
+          "Falling back to system properties for proxy configuration for client: {}", this.name);
       return HttpUtil.generateProxyPropertiesForJDBC();
     }
 
     return proxyProperties;
   }
-
-
 
   public Map<FullyQualifiedTableName, EncryptionKey> getEncryptionKeysPerTable() {
     return encryptionKeysPerTable;

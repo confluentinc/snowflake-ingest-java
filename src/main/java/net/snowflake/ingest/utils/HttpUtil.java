@@ -152,33 +152,39 @@ public class HttpUtil {
       String accountName, Properties proxyProperties) {
 
     boolean disallowLocalIps = true;
-    if (proxyProperties != null && proxyProperties.containsKey(Utils.CONNECTION_DISALLOW_LOCAL_IPS)) {
+    if (proxyProperties != null
+        && proxyProperties.containsKey(Utils.CONNECTION_DISALLOW_LOCAL_IPS)) {
       disallowLocalIps =
           Boolean.parseBoolean(proxyProperties.getProperty(Utils.CONNECTION_DISALLOW_LOCAL_IPS));
     }
 
     boolean disallowPrivateIps = true;
-    if (proxyProperties != null && proxyProperties.containsKey(Utils.CONNECTION_DISALLOW_PRIVATE_IPS)) {
+    if (proxyProperties != null
+        && proxyProperties.containsKey(Utils.CONNECTION_DISALLOW_PRIVATE_IPS)) {
       disallowPrivateIps =
           Boolean.parseBoolean(proxyProperties.getProperty(Utils.CONNECTION_DISALLOW_PRIVATE_IPS));
     }
 
     boolean disallowClassEIps = true;
-    if (proxyProperties != null && proxyProperties.containsKey(Utils.CONNECTION_DISALLOW_CLASS_E_IPS)) {
+    if (proxyProperties != null
+        && proxyProperties.containsKey(Utils.CONNECTION_DISALLOW_CLASS_E_IPS)) {
       disallowClassEIps =
           Boolean.parseBoolean(proxyProperties.getProperty(Utils.CONNECTION_DISALLOW_CLASS_E_IPS));
     }
 
     List<String> disallowCidrRanges = Collections.emptyList();
-    if (proxyProperties != null && proxyProperties.containsKey(Utils.CONNECTION_DISALLOW_CIDR_RANGES)) {
-      String disallowCidrRangesStr = proxyProperties.getProperty(Utils.CONNECTION_DISALLOW_CIDR_RANGES);
+    if (proxyProperties != null
+        && proxyProperties.containsKey(Utils.CONNECTION_DISALLOW_CIDR_RANGES)) {
+      String disallowCidrRangesStr =
+          proxyProperties.getProperty(Utils.CONNECTION_DISALLOW_CIDR_RANGES);
       if (!isNullOrEmpty(disallowCidrRangesStr)) {
         disallowCidrRanges = Arrays.asList(disallowCidrRangesStr.split(","));
       }
     }
 
     List<String> allowCidrRanges = Collections.emptyList();
-    if (proxyProperties != null && proxyProperties.containsKey(Utils.CONNECTION_ALLOW_CIDR_RANGES)) {
+    if (proxyProperties != null
+        && proxyProperties.containsKey(Utils.CONNECTION_ALLOW_CIDR_RANGES)) {
       String allowCidrRangesStr = proxyProperties.getProperty(Utils.CONNECTION_ALLOW_CIDR_RANGES);
       if (!isNullOrEmpty(allowCidrRangesStr)) {
         allowCidrRanges = Arrays.asList(allowCidrRangesStr.split(","));

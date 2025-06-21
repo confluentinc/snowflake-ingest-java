@@ -87,6 +87,11 @@
         <scope>import</scope>
       </dependency>
       <dependency>
+        <groupId>com.github.luben</groupId>
+        <artifactId>zstd-jni</artifactId>
+        <version>${zstd-jni.version}</version>
+      </dependency>
+      <dependency>
         <groupId>com.google.guava</groupId>
         <artifactId>guava</artifactId>
         <version>${guava.version}</version>
@@ -365,11 +370,6 @@
         <artifactId>snappy-java</artifactId>
         <version>${snappy.version}</version>
       </dependency>
-      <dependency>
-        <groupId>com.github.luben</groupId>
-        <artifactId>zstd-jni</artifactId>
-        <version>${zstd-jni.version}</version>
-      </dependency>
 
       <!-- JUnit so that we can make some basic unit tests -->
       <dependency>
@@ -458,17 +458,6 @@
   <!-- All of our needed dependencies -->
   <dependencies>
     <dependency>
-      <groupId>io.confluent</groupId>
-      <artifactId>connect-utils</artifactId>
-      <version>0.6.4</version>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.kafka</groupId>
-      <artifactId>connect-api</artifactId>
-      <version>3.6.1</version>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-annotations</artifactId>
     </dependency>
@@ -522,6 +511,11 @@
     <dependency>
       <groupId>commons-io</groupId>
       <artifactId>commons-io</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.confluent</groupId>
+      <artifactId>connect-utils</artifactId>
+      <version>0.6.4</version>
     </dependency>
 
     <!-- https://mvnrepository.com/artifact/io.dropwizard.metrics/metrics-core -->
@@ -578,6 +572,11 @@
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-mapreduce-client-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.httpcomponents</groupId>
+      <artifactId>httpclient</artifactId>
+      <version>4.5.14</version>
     </dependency>
     <dependency>
       <groupId>org.apache.iceberg</groupId>
@@ -639,6 +638,12 @@
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>connect-api</artifactId>
+      <version>3.6.1</version>
+      <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>com.google.protobuf</groupId>
@@ -707,11 +712,6 @@
       <version>${slf4j.version}</version>
       <scope>test</scope>
     </dependency>
-    <dependency>
-      <groupId>org.apache.httpcomponents</groupId>
-      <artifactId>httpclient</artifactId>
-      <version>4.5.14</version>
-    </dependency>
   </dependencies>
 
   <build>
@@ -736,8 +736,7 @@
         </plugin>
         <plugin>
           <artifactId>maven-deploy-plugin</artifactId>
-          <configuration>
-          </configuration>
+          <configuration/>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
