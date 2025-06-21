@@ -958,6 +958,7 @@
                   <exclude>org.slf4j:slf4j-api</exclude>
                   <exclude>com.github.luben:zstd-jni</exclude>
                   <exclude>org.apache.kafka:connect-api</exclude>
+                  <exclude>io.confluent:connect-utils</exclude>
                 </excludes>
               </artifactSet>
               <relocations>
