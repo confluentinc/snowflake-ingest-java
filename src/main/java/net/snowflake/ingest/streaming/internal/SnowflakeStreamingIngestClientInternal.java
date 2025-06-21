@@ -1106,12 +1106,17 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
     if (this.originalProperties != null) {
 
       for (String key : this.originalProperties.stringPropertyNames()) {
-        if (key.equals(SFSessionProperty.USE_PROXY.getPropertyKey()) ||
-                key.equals(SFSessionProperty.PROXY_HOST.getPropertyKey()) ||
-                key.equals(SFSessionProperty.PROXY_PORT.getPropertyKey()) ||
-                key.equals(SFSessionProperty.NON_PROXY_HOSTS.getPropertyKey()) ||
-                key.equals(SFSessionProperty.PROXY_USER.getPropertyKey()) ||
-                key.equals(SFSessionProperty.PROXY_PASSWORD.getPropertyKey())) {
+        if (key.equals(SFSessionProperty.USE_PROXY.getPropertyKey())
+            || key.equals(SFSessionProperty.PROXY_HOST.getPropertyKey())
+            || key.equals(SFSessionProperty.PROXY_PORT.getPropertyKey())
+            || key.equals(SFSessionProperty.NON_PROXY_HOSTS.getPropertyKey())
+            || key.equals(SFSessionProperty.PROXY_USER.getPropertyKey())
+            || key.equals(SFSessionProperty.PROXY_PASSWORD.getPropertyKey())
+            || key.equals(Utils.CONNECTION_DISALLOW_LOCAL_IPS)
+            || key.equals(Utils.CONNECTION_DISALLOW_PRIVATE_IPS)
+            || key.equals(Utils.CONNECTION_DISALLOW_CLASS_E_IPS)
+            || key.equals(Utils.CONNECTION_DISALLOW_CIDR_RANGES)
+            || key.equals(Utils.CONNECTION_ALLOW_CIDR_RANGES)) {
           proxyProperties.put(key, this.originalProperties.getProperty(key));
         }
       }

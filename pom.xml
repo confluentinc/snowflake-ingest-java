@@ -74,6 +74,7 @@
     <snappy.version>1.1.10.5</snappy.version>
     <snowjdbc.version>3.20.0</snowjdbc.version>
     <yetus.version>0.13.0</yetus.version>
+    <zstd-jni.version>1.5.6-2</zstd-jni.version>
   </properties>
 
   <dependencyManagement>
@@ -364,6 +365,11 @@
         <artifactId>snappy-java</artifactId>
         <version>${snappy.version}</version>
       </dependency>
+      <dependency>
+        <groupId>com.github.luben</groupId>
+        <artifactId>zstd-jni</artifactId>
+        <version>${zstd-jni.version}</version>
+      </dependency>
 
       <!-- JUnit so that we can make some basic unit tests -->
       <dependency>
@@ -451,6 +457,17 @@
 
   <!-- All of our needed dependencies -->
   <dependencies>
+    <dependency>
+      <groupId>io.confluent</groupId>
+      <artifactId>connect-utils</artifactId>
+      <version>0.6.4</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>connect-api</artifactId>
+      <version>3.6.1</version>
+      <scope>provided</scope>
+    </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-annotations</artifactId>
@@ -624,12 +641,6 @@
       <artifactId>slf4j-api</artifactId>
     </dependency>
     <dependency>
-      <groupId>com.github.luben</groupId>
-      <artifactId>zstd-jni</artifactId>
-      <version>1.5.6-2</version>
-      <scope>runtime</scope>
-    </dependency>
-    <dependency>
       <groupId>com.google.protobuf</groupId>
       <artifactId>protobuf-java</artifactId>
       <scope>runtime</scope>
@@ -695,6 +706,11 @@
       <artifactId>slf4j-simple</artifactId>
       <version>${slf4j.version}</version>
       <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.httpcomponents</groupId>
+      <artifactId>httpclient</artifactId>
+      <version>4.5.14</version>
     </dependency>
   </dependencies>
 
@@ -864,13 +880,14 @@
             <configuration>
               <failOnWarning>true</failOnWarning>
               <ignoreNonCompile>true</ignoreNonCompile>
-              <ignoredDependencies>
-                <!-- We defined these as direct dependencies (as opposed to just declaring it in dependencyManagement)
-                                                                                                                                                                                                                                                to workaround https://issues.apache.org/jira/browse/MNG-7982. Now the dependency analyzer complains that
-                                                                                                                                                                                                                                                the dependency is unused, so we ignore it here-->
+              <ignoredUnusedDeclaredDependencies>
+
+                <dependency>org.apache.httpcomponents:httpclient</dependency>
+                <dependency>org.apache.kafka:connect-api</dependency>
+                <dependency>com.github.luben:zstd-jni</dependency>
                 <ignoredDependency>org.apache.commons:commons-compress</ignoredDependency>
                 <ignoredDependency>org.apache.commons:commons-configuration2</ignoredDependency>
-              </ignoredDependencies>
+              </ignoredUnusedDeclaredDependencies>
             </configuration>
           </execution>
         </executions>
@@ -1139,6 +1156,8 @@
                   <exclude>net.snowflake:snowflake-jdbc</exclude>
                   <exclude>org.slf4j:slf4j-api</exclude>
                   <exclude>com.github.luben:zstd-jni</exclude>
+                  <exclude>org.apache.kafka:connect-api</exclude>
+                  <exclude>io.confluent:connect-utils</exclude>
                 </excludes>
               </artifactSet>
               <relocations>
@@ -1315,6 +1334,7 @@
                 </goals>
                 <phase>generate-resources</phase>
                 <configuration>
+                  <skip>true</skip>
                   <executable>python3</executable>
                   <arguments>
                     <argument>${project.basedir}/scripts/process_licenses.py</argument>
