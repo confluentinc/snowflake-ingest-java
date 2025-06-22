@@ -835,18 +835,18 @@
           <verifyFailOn>strict</verifyFailOn>
         </configuration>
         <executions>
-          <!--          <execution>-->
-          <!--            <goals>-->
-          <!--              <goal>verify</goal>-->
-          <!--            </goals>-->
-          <!--            <phase>validate</phase>-->
-          <!--          </execution>-->
-          <execution>
-            <goals>
-              <goal>verify</goal>
-            </goals>
-            <phase>validate</phase>
-          </execution>
+<!--                    <execution>-->
+<!--                      <goals>-->
+<!--                        <goal>verify</goal>-->
+<!--                      </goals>-->
+<!--                      <phase>validate</phase>-->
+<!--                    </execution>-->
+<!--          <execution>-->
+<!--            <goals>-->
+<!--              <goal>verify</goal>-->
+<!--            </goals>-->
+<!--            <phase>validate</phase>-->
+<!--          </execution>-->
         </executions>
       </plugin>
       <plugin>
