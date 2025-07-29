@@ -286,6 +286,10 @@ class FlushService<T> {
               && !isTestMode()
               && (this.isNeedFlush || flushStartTime - this.lastFlushTime >= flushingInterval))) {
         tablesToFlush = this.channelCache.keySet();
+        logger.logInfo(
+                "Channel cache size={}, rowBufferSize={}",
+                this.channelCache.getSize(),
+                this.channelCache.getRowBufferSize());
       } else {
         tablesToFlush = null;
       }
