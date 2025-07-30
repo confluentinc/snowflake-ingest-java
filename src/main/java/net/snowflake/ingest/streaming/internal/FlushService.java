@@ -287,7 +287,7 @@ class FlushService<T> {
               && (this.isNeedFlush || flushStartTime - this.lastFlushTime >= flushingInterval))) {
         tablesToFlush = this.channelCache.keySet();
         logger.logInfo(
-                "Channel cache size={}, rowBufferSize={}",
+                "Channel cache (Total tables to flush) size={}, Total rowBufferSize={}",
                 this.channelCache.getSize(),
                 this.channelCache.getRowBufferSize());
       } else {
@@ -424,6 +424,7 @@ class FlushService<T> {
         } else {
           ConcurrentHashMap<String, SnowflakeStreamingIngestChannelInternal<T>> table =
               itr.next().getValue();
+          logger.logInfo("Processing for {} channels", table.size());
           // Use parallel stream since getData could be the performance bottleneck when we have a
           // high number of channels
           table.values().parallelStream()
