@@ -182,7 +182,9 @@ class SnowflakeStreamingIngestChannelInternal<T> implements SnowflakeStreamingIn
    * @return a ChannelData object
    */
   ChannelData<T> getData() {
+    logger.logInfo("Before flush Channel name {}, Buffer size {}", this.channelFlushContext.getFullyQualifiedName(), this.rowBuffer.getSize());
     ChannelData<T> data = this.rowBuffer.flush();
+    logger.logInfo("After flush Channel name {}, Buffer size {}", this.channelFlushContext.getFullyQualifiedName(), this.rowBuffer.getSize());
     if (data != null) {
       data.setChannelContext(channelFlushContext);
     }
