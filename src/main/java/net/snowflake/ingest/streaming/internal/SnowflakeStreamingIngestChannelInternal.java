@@ -454,7 +454,7 @@ class SnowflakeStreamingIngestChannelInternal<T> implements SnowflakeStreamingIn
     freeMemoryInBytes = memoryInfoProvider.getFreeMemory();
     boolean hasLowRuntimeMemory =
         freeMemoryInBytes < insertThrottleThresholdInBytes
-            || freeMemoryInBytes * 100 / maxMemory < insertThrottleThresholdInPercentage;
+            && freeMemoryInBytes * 100 / maxMemory < insertThrottleThresholdInPercentage;
     if (hasLowRuntimeMemory) {
       logger.logWarn(
           "Throttled due to memory pressure, client={}, channel={}.",
