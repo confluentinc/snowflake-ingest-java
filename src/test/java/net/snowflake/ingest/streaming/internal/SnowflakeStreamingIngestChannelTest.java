@@ -726,7 +726,7 @@ public class SnowflakeStreamingIngestChannelTest {
 
   @Test
   public void testInsertRowThrottling() {
-    final long maxMemory = 1000000L;
+    final long maxMemory = 300000000L;
 
     final MockedMemoryInfoProvider memoryInfoProvider = new MockedMemoryInfoProvider();
     memoryInfoProvider.maxMemory = maxMemory;
