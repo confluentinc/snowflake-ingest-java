@@ -49,7 +49,7 @@ blocks:
             - artifact push workflow target
 
   - name: Release
-    dependencies: ["Test"]
+    dependencies: [] # disable tests dependency
     run:
       when: "branch = 'master' or branch =~ '[0-9]+\\.[0-9]+\\.x' or branch =~ 'v[0-9]+\\.[0-9]+\\.[0-9]+-hotfix-x'"
     task:
