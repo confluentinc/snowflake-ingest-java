@@ -35,7 +35,7 @@ public class ParameterProviderTest {
     parameterMap.put(ParameterProvider.MAX_CLIENT_LAG, 1000L);
     parameterMap.put(ParameterProvider.BUFFER_FLUSH_CHECK_INTERVAL_IN_MILLIS, 4L);
     parameterMap.put(ParameterProvider.INSERT_THROTTLE_THRESHOLD_IN_PERCENTAGE, 6);
-    parameterMap.put(ParameterProvider.INSERT_THROTTLE_THRESHOLD_IN_BYTES, 1024);
+    parameterMap.put(ParameterProvider.INSERT_THROTTLE_THRESHOLD_IN_BYTES, 1024L);
     parameterMap.put(ParameterProvider.INSERT_THROTTLE_INTERVAL_IN_MILLIS, 7L);
     parameterMap.put(ParameterProvider.IO_TIME_CPU_RATIO, 10);
     parameterMap.put(ParameterProvider.BLOB_UPLOAD_MAX_RETRY_COUNT, 100);
@@ -55,7 +55,7 @@ public class ParameterProviderTest {
     Assert.assertEquals(1000L, parameterProvider.getCachedMaxClientLagInMs());
     Assert.assertEquals(4L, parameterProvider.getBufferFlushCheckIntervalInMs());
     Assert.assertEquals(6, parameterProvider.getInsertThrottleThresholdInPercentage());
-    Assert.assertEquals(1024, parameterProvider.getInsertThrottleThresholdInBytes());
+    Assert.assertEquals(1024L, parameterProvider.getInsertThrottleThresholdInBytes());
     Assert.assertEquals(7L, parameterProvider.getInsertThrottleIntervalInMs());
     Assert.assertEquals(10, parameterProvider.getIOTimeCpuRatio());
     Assert.assertEquals(100, parameterProvider.getBlobUploadMaxRetryCount());
@@ -72,7 +72,7 @@ public class ParameterProviderTest {
     parameterMap.put(ParameterProvider.MAX_CLIENT_LAG, 3000L);
     parameterMap.put(ParameterProvider.BUFFER_FLUSH_CHECK_INTERVAL_IN_MILLIS, 4L);
     parameterMap.put(ParameterProvider.INSERT_THROTTLE_THRESHOLD_IN_PERCENTAGE, 6);
-    parameterMap.put(ParameterProvider.INSERT_THROTTLE_THRESHOLD_IN_BYTES, 1024);
+    parameterMap.put(ParameterProvider.INSERT_THROTTLE_THRESHOLD_IN_BYTES, 1024L);
     ParameterProvider parameterProvider =
         TestUtils.createParameterProvider(parameterMap, null, enableIcebergStreaming);
 
@@ -91,7 +91,7 @@ public class ParameterProviderTest {
     props.put(ParameterProvider.MAX_CLIENT_LAG, 3000L);
     props.put(ParameterProvider.BUFFER_FLUSH_CHECK_INTERVAL_IN_MILLIS, 4L);
     props.put(ParameterProvider.INSERT_THROTTLE_THRESHOLD_IN_PERCENTAGE, 6);
-    props.put(ParameterProvider.INSERT_THROTTLE_THRESHOLD_IN_BYTES, 1024);
+    props.put(ParameterProvider.INSERT_THROTTLE_THRESHOLD_IN_BYTES, 1024L);
     ParameterProvider parameterProvider =
         TestUtils.createParameterProvider(null, props, enableIcebergStreaming);
 

@@ -53,7 +53,7 @@ public class ParameterProvider {
   public static final long BUFFER_FLUSH_CHECK_INTERVAL_IN_MILLIS_DEFAULT = 100;
   public static final long INSERT_THROTTLE_INTERVAL_IN_MILLIS_DEFAULT = 1000;
   public static final int INSERT_THROTTLE_THRESHOLD_IN_PERCENTAGE_DEFAULT = 10;
-  public static final int INSERT_THROTTLE_THRESHOLD_IN_BYTES_DEFAULT = 200 * 1024 * 1024; // 200MB
+  public static final long INSERT_THROTTLE_THRESHOLD_IN_BYTES_DEFAULT = 200 * 1024 * 1024; // 200MB
   public static final boolean SNOWPIPE_STREAMING_METRICS_DEFAULT = false;
   public static final Constants.BdecVersion BLOB_FORMAT_VERSION_DEFAULT =
       Constants.BdecVersion.THREE;
@@ -379,14 +379,14 @@ public class ParameterProvider {
   }
 
   /** @return Absolute size in bytes of free total memory at which we throttle row inserts */
-  public int getInsertThrottleThresholdInBytes() {
+  public long getInsertThrottleThresholdInBytes() {
     Object val =
         this.parameterMap.getOrDefault(
             INSERT_THROTTLE_THRESHOLD_IN_BYTES, INSERT_THROTTLE_THRESHOLD_IN_BYTES_DEFAULT);
     if (val instanceof String) {
-      return Integer.parseInt(val.toString());
+      return Long.parseLong(val.toString());
     }
-    return (int) val;
+    return (long) val;
   }
 
   /** @return true if jmx metrics are enabled for a client */
