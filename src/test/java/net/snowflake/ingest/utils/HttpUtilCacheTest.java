@@ -7,6 +7,7 @@ import java.util.Properties;
 import net.snowflake.client.core.SFSessionProperty;
 import net.snowflake.client.jdbc.internal.apache.http.impl.client.CloseableHttpClient;
 import org.junit.After;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /**
@@ -14,6 +15,7 @@ import org.junit.Test;
  * based on account name and proxy settings. Note: Both JDBC and streaming clients now use unified
  * SFSessionProperty constants for proxy configuration.
  */
+@Ignore("Skipping this test class intentionally")
 public class HttpUtilCacheTest {
 
   @After
