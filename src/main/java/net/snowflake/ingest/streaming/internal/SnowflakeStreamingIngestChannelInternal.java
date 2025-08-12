@@ -46,7 +46,7 @@ class SnowflakeStreamingIngestChannelInternal<T> implements SnowflakeStreamingIn
   // Reference to the row buffer
   private final RowBuffer<T> rowBuffer;
   private final long insertThrottleIntervalInMs;
-  private final int insertThrottleThresholdInBytes;
+  private final long insertThrottleThresholdInBytes;
   private final int insertThrottleThresholdInPercentage;
   private final long maxMemoryLimitInBytes;
 
