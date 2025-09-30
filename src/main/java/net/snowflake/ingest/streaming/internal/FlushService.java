@@ -309,9 +309,10 @@ class FlushService<T> {
 
   /** Create the workers for each specific job */
   private void createWorkers() {
+    String threadNamePrefix = this.owningClient.getParameterProvider().getThreadNamePrefix();
     // Create thread for checking and scheduling flush job
     ThreadFactory flushThreadFactory =
-        new ThreadFactoryBuilder().setNameFormat("ingest-flush-thread").build();
+        new ThreadFactoryBuilder().setNameFormat(threadNamePrefix + "ingest-flush-thread").build();
     this.flushWorker = Executors.newSingleThreadScheduledExecutor(flushThreadFactory);
     this.flushWorker.scheduleWithFixedDelay(
         () -> {
@@ -359,13 +360,13 @@ class FlushService<T> {
 
     // Create thread for registering blobs
     ThreadFactory registerThreadFactory =
-        new ThreadFactoryBuilder().setNameFormat("ingest-register-thread").build();
+        new ThreadFactoryBuilder().setNameFormat(threadNamePrefix + "ingest-register-thread").build();
     this.registerWorker = Executors.newSingleThreadExecutor(registerThreadFactory);
 
     // Create threads for building and uploading blobs
     // Size: number of available processors * (1 + IO time/CPU time)
     ThreadFactory buildUploadThreadFactory =
-        new ThreadFactoryBuilder().setNameFormat("ingest-build-upload-thread-%d").build();
+        new ThreadFactoryBuilder().setNameFormat(threadNamePrefix + "ingest-build-upload-thread-%d").build();
     int buildUploadThreadCount =
         Math.min(
             Runtime.getRuntime().availableProcessors()
