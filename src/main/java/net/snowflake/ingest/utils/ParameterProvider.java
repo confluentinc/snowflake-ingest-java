@@ -542,6 +542,7 @@ public class ParameterProvider {
     return cachedEnableIcebergStreaming;
   }
 
+  /** @return Ingest threads prefix */
   public String getThreadNamePrefix() {
     String taskId = (String) this.parameterMap.getOrDefault(TASK_ID, TASK_ID_DEFAULT);
     String connectorName = (String) this.parameterMap.getOrDefault(CONNECTOR_NAME, CONNECTOR_NAME_DEFAULT);
