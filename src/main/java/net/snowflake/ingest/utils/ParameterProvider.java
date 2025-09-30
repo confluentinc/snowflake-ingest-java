@@ -275,6 +275,14 @@ public class ParameterProvider {
         props,
         false /* enforceDefault */);
 
+    this.checkAndUpdate(
+        TASK_ID, TASK_ID_DEFAULT, parameterOverrides, props, false /* enforceDefault */
+    );
+
+    this.checkAndUpdate(
+        CONNECTOR_NAME, CONNECTOR_NAME_DEFAULT, parameterOverrides, props, false /* enforceDefault */
+    );
+
     if (getMaxChunksInBlob() > getMaxChunksInRegistrationRequest()) {
       throw new IllegalArgumentException(
           String.format(
