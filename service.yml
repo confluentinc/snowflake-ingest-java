@@ -1,6 +1,6 @@
 name: snowflake-ingest-java
 lang: java
-lang_version: 8
+lang_version: "8"
 codeowners:
   enable: true
 semaphore:
