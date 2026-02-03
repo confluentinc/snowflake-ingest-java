@@ -51,6 +51,9 @@ public class ParameterProvider {
 
   public static final String TASK_ID = "TASK_ID".toLowerCase();
   public static final String CONNECTOR_NAME = "CONNECTOR_NAME".toLowerCase();
+  public static final String ENABLE_DYNAMIC_FLUSH = "ENABLE_DYNAMIC_FLUSH".toLowerCase();
+  public static final String TASK_BUFFER_TOTAL_LIMIT_BYTES =
+      "TASK_BUFFER_TOTAL_LIMIT_BYTES".toLowerCase();
 
   // Default values
   public static final long BUFFER_FLUSH_CHECK_INTERVAL_IN_MILLIS_DEFAULT = 100;
@@ -67,6 +70,8 @@ public class ParameterProvider {
   public static final long MAX_CHUNK_SIZE_IN_BYTES_DEFAULT = 128 * 1024 * 1024;
   public static final String TASK_ID_DEFAULT = "-1";
   public static final String CONNECTOR_NAME_DEFAULT = "unknown";
+  public static final Boolean ENABLE_DYNAMIC_FLUSH_DEFAULT = false;
+  public static final long TASK_BUFFER_TOTAL_LIMIT_BYTES_DEFAULT = 524288000L; // 500 MB
 
   // Lag related parameters
   public static final long MAX_CLIENT_LAG_DEFAULT = 1000; // 1 second
@@ -276,12 +281,14 @@ public class ParameterProvider {
         false /* enforceDefault */);
 
     this.checkAndUpdate(
-        TASK_ID, TASK_ID_DEFAULT, parameterOverrides, props, false /* enforceDefault */
-    );
+        TASK_ID, TASK_ID_DEFAULT, parameterOverrides, props, false /* enforceDefault */);
 
     this.checkAndUpdate(
-        CONNECTOR_NAME, CONNECTOR_NAME_DEFAULT, parameterOverrides, props, false /* enforceDefault */
-    );
+        CONNECTOR_NAME,
+        CONNECTOR_NAME_DEFAULT,
+        parameterOverrides,
+        props,
+        false /* enforceDefault */);
 
     if (getMaxChunksInBlob() > getMaxChunksInRegistrationRequest()) {
       throw new IllegalArgumentException(
@@ -545,8 +552,23 @@ public class ParameterProvider {
   /** @return Ingest threads prefix */
   public String getThreadNamePrefix() {
     String taskId = (String) this.parameterMap.getOrDefault(TASK_ID, TASK_ID_DEFAULT);
-    String connectorName = (String) this.parameterMap.getOrDefault(CONNECTOR_NAME, CONNECTOR_NAME_DEFAULT);
+    String connectorName =
+        (String) this.parameterMap.getOrDefault(CONNECTOR_NAME, CONNECTOR_NAME_DEFAULT);
     return connectorName + "-" + taskId + "-";
+  }
+
+  /** @return Whether dynamic flushes is enabled */
+  public boolean isEnableDynamicFlush() {
+    Object val = this.parameterMap.getOrDefault(ENABLE_DYNAMIC_FLUSH, ENABLE_DYNAMIC_FLUSH_DEFAULT);
+    return (val instanceof String) ? Boolean.parseBoolean(val.toString()) : (boolean) val;
+  }
+
+  /** @return The task buffer total limit in bytes */
+  public long getTaskBufferTotalLimitBytes() {
+    Object val =
+        this.parameterMap.getOrDefault(
+            TASK_BUFFER_TOTAL_LIMIT_BYTES, TASK_BUFFER_TOTAL_LIMIT_BYTES_DEFAULT);
+    return (val instanceof String) ? Long.parseLong(val.toString()) : (long) val;
   }
 
   @Override
