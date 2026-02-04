@@ -290,6 +290,20 @@ public class ParameterProvider {
         props,
         false /* enforceDefault */);
 
+    this.checkAndUpdate(
+        ENABLE_DYNAMIC_FLUSH,
+        ENABLE_DYNAMIC_FLUSH_DEFAULT,
+        parameterOverrides,
+        props,
+        false /* enforceDefault */);
+
+    this.checkAndUpdate(
+        TASK_BUFFER_TOTAL_LIMIT_BYTES,
+        TASK_BUFFER_TOTAL_LIMIT_BYTES_DEFAULT,
+        parameterOverrides,
+        props,
+        false /* enforceDefault */);
+
     if (getMaxChunksInBlob() > getMaxChunksInRegistrationRequest()) {
       throw new IllegalArgumentException(
           String.format(

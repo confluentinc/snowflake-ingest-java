@@ -289,4 +289,14 @@ public class ChannelCacheTest {
         "Invalidated by test");
     Assert.assertFalse(channel3.isValid());
   }
+
+  @Test
+  public void testGetRowBufferSizeWithChannels() {
+    // The cache already has 3 channels from setup, all with empty buffers
+    // Initial size should be 0 since no rows have been inserted
+    long size = cache.getRowBufferSize();
+    Assert.assertEquals(0L, size);
+    // Verify the return type is long
+    Assert.assertTrue(size >= 0L);
+  }
 }
