@@ -287,9 +287,9 @@ class FlushService<T> {
               && (this.isNeedFlush || flushStartTime - this.lastFlushTime >= flushingInterval))) {
         tablesToFlush = this.channelCache.keySet();
         logger.logDebug(
-                "Channel cache (Total tables to flush) size={}, Total rowBufferSize={}",
-                this.channelCache.getSize(),
-                this.channelCache.getRowBufferSize());
+            "Channel cache (Total tables to flush) size={}, Total rowBufferSize={}",
+            this.channelCache.getSize(),
+            this.channelCache.getRowBufferSize());
       } else {
         tablesToFlush = null;
       }
@@ -360,13 +360,17 @@ class FlushService<T> {
 
     // Create thread for registering blobs
     ThreadFactory registerThreadFactory =
-        new ThreadFactoryBuilder().setNameFormat(threadNamePrefix + "ingest-register-thread").build();
+        new ThreadFactoryBuilder()
+            .setNameFormat(threadNamePrefix + "ingest-register-thread")
+            .build();
     this.registerWorker = Executors.newSingleThreadExecutor(registerThreadFactory);
 
     // Create threads for building and uploading blobs
     // Size: number of available processors * (1 + IO time/CPU time)
     ThreadFactory buildUploadThreadFactory =
-        new ThreadFactoryBuilder().setNameFormat(threadNamePrefix + "ingest-build-upload-thread-%d").build();
+        new ThreadFactoryBuilder()
+            .setNameFormat(threadNamePrefix + "ingest-build-upload-thread-%d")
+            .build();
     int buildUploadThreadCount =
         Math.min(
             Runtime.getRuntime().availableProcessors()

@@ -349,6 +349,7 @@ class SnowflakeStreamingIngestChannelInternal<T> implements SnowflakeStreamingIn
       Iterable<Map<String, Object>> rows,
       @Nullable String startOffsetToken,
       @Nullable String endOffsetToken) {
+    triggerDynamicFlushIfNeeded();
     throttleInsertIfNeeded(memoryInfoProvider);
     checkValidation();
 
@@ -426,7 +427,8 @@ class SnowflakeStreamingIngestChannelInternal<T> implements SnowflakeStreamingIn
     int retry = 0;
     while ((hasLowRuntimeMemory(memoryInfoProvider)
             || (this.owningClient.getFlushService() != null
-                && this.owningClient.getFlushService().throttleDueToQueuedFlushTasks()))
+                && this.owningClient.getFlushService().throttleDueToQueuedFlushTasks())
+            || exceedsTaskBufferLimit())
         && retry < INSERT_THROTTLE_MAX_RETRY_COUNT) {
       try {
         Thread.sleep(insertThrottleIntervalInMs);
@@ -484,5 +486,35 @@ class SnowflakeStreamingIngestChannelInternal<T> implements SnowflakeStreamingIn
   @VisibleForTesting
   public ChannelFlushContext getChannelContext() {
     return channelFlushContext;
+  }
+
+  /** Check whether the total task buffer limit is exceeded by the channel cache */
+  private boolean exceedsTaskBufferLimit() {
+    if (!this.owningClient.getParameterProvider().isEnableDynamicFlush()) {
+      return false;
+    }
+    long currentBufferSize = this.owningClient.getChannelCache().getRowBufferSize();
+    long memoryLimitBytes = this.owningClient.getParameterProvider().getTaskBufferTotalLimitBytes();
+    boolean exceeds = currentBufferSize >= memoryLimitBytes;
+    if (exceeds) {
+      logger.logWarn(
+          "Task buffer limit exceeded, client={}, channel={}, "
+              + "currentBufferSize={}, taskBufferLimit={}",
+          this.owningClient.getName(),
+          getFullyQualifiedName(),
+          currentBufferSize,
+          memoryLimitBytes);
+    }
+    return exceeds;
+  }
+
+  /** Trigger dynamic flush if enabled and task buffer limit is exceeded by the channel cache. */
+  void triggerDynamicFlushIfNeeded() {
+    if (owningClient.getParameterProvider().isEnableDynamicFlush()
+        && this.exceedsTaskBufferLimit()) {
+      logger.logInfo(
+          "Triggering dynamic flushing due to channel exceeding total task buffer limit.");
+      this.owningClient.setNeedFlush(this.channelFlushContext.getFullyQualifiedTableName());
+    }
   }
 }

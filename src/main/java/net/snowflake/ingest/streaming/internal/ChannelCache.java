@@ -195,11 +195,12 @@ class ChannelCache<T> {
     return cache.size();
   }
 
-  float getRowBufferSize() {
-    float total = 0;
-    for (ConcurrentHashMap<String, SnowflakeStreamingIngestChannelInternal<T>> channels : this.cache.values()) {
+  long getRowBufferSize() {
+    long total = 0;
+    for (ConcurrentHashMap<String, SnowflakeStreamingIngestChannelInternal<T>> channels :
+        this.cache.values()) {
       for (SnowflakeStreamingIngestChannelInternal<T> channel : channels.values()) {
-        total += channel.getRowBuffer().getSize();
+        total += (long) channel.getRowBuffer().getSize();
       }
     }
     return total;
