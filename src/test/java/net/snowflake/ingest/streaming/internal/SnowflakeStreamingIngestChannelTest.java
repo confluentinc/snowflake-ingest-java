@@ -970,4 +970,126 @@ public class SnowflakeStreamingIngestChannelTest {
       Assert.assertEquals(ErrorCode.CHANNEL_STATUS_INVALID.getMessageCode(), e.getVendorCode());
     }
   }
+
+  @Test
+  public void testThrottleInsertDueToTaskBufferLimitWhenDynamicFlushEnabled() throws Exception {
+    // Create a client with dynamic flush enabled and a small task buffer limit
+    Map<String, Object> parameterOverrides = new HashMap<>();
+    parameterOverrides.put(ParameterProvider.ENABLE_DYNAMIC_FLUSH, true);
+    parameterOverrides.put(ParameterProvider.TASK_BUFFER_TOTAL_LIMIT_BYTES, 100L); // Very small limit
+    parameterOverrides.put(ParameterProvider.INSERT_THROTTLE_INTERVAL_IN_MILLIS, 10L); // Short interval for testing
+
+    CloseableHttpClient httpClient = MockSnowflakeServiceClient.createHttpClient(apiOverride);
+    RequestBuilder requestBuilder =
+        MockSnowflakeServiceClient.createRequestBuilder(httpClient, enableIcebergStreaming);
+
+    try (SnowflakeStreamingIngestClientInternal<StubChunkData> clientWithDynamicFlush =
+        new SnowflakeStreamingIngestClientInternal<>(
+            "clientWithDynamicFlush",
+            null,
+            TestUtils.createProps(enableIcebergStreaming),
+            httpClient,
+            true,
+            requestBuilder,
+            parameterOverrides)) {
+
+      // Verify dynamic flush is enabled and task buffer limit is set
+      Assert.assertTrue(clientWithDynamicFlush.getParameterProvider().isEnableDynamicFlush());
+      Assert.assertEquals(100L, clientWithDynamicFlush.getParameterProvider().getTaskBufferTotalLimitBytes());
+    }
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  public void testInsertRowThrottlingWithTaskBufferLimit() throws Exception {
+    final long maxMemory = 300000000L;
+
+    final MockedMemoryInfoProvider memoryInfoProvider = new MockedMemoryInfoProvider();
+    memoryInfoProvider.maxMemory = maxMemory;
+    memoryInfoProvider.freeMemory = maxMemory; // Enough free memory (no memory pressure)
+
+    // Create client with dynamic flush enabled and a small buffer limit
+    Map<String, Object> parameterOverrides = new HashMap<>();
+    parameterOverrides.put(ParameterProvider.ENABLE_DYNAMIC_FLUSH, true);
+    parameterOverrides.put(ParameterProvider.TASK_BUFFER_TOTAL_LIMIT_BYTES, 100L); // 100 byte limit
+    parameterOverrides.put(ParameterProvider.INSERT_THROTTLE_INTERVAL_IN_MILLIS, 50L); // Short interval for faster test
+
+    CloseableHttpClient httpClient = MockSnowflakeServiceClient.createHttpClient(apiOverride);
+    RequestBuilder requestBuilder =
+        MockSnowflakeServiceClient.createRequestBuilder(httpClient, enableIcebergStreaming);
+
+    try (SnowflakeStreamingIngestClientInternal<StubChunkData> clientWithSmallBuffer =
+        new SnowflakeStreamingIngestClientInternal<>(
+            "clientWithSmallBuffer",
+            null,
+            TestUtils.createProps(enableIcebergStreaming),
+            httpClient,
+            true,
+            requestBuilder,
+            parameterOverrides)) {
+
+      // Spy on the client to mock the channel cache's getRowBufferSize
+      SnowflakeStreamingIngestClientInternal<StubChunkData> spyClient =
+          Mockito.spy(clientWithSmallBuffer);
+      ChannelCache<StubChunkData> mockCache = Mockito.mock(ChannelCache.class);
+
+      // Track the number of calls to simulate buffer draining after a few retries
+      final int[] callCount = {0};
+      final int callsBeforeBufferDrains = 3; // After 3 calls, buffer "drains" below limit
+
+      Mockito.when(mockCache.getRowBufferSize()).thenAnswer(invocation -> {
+        callCount[0]++;
+        if (callCount[0] <= callsBeforeBufferDrains) {
+          // First few calls: buffer exceeds limit (1000 > 100), throttle should continue
+          return 1000L;
+        } else {
+          // After a few retries: buffer is below limit (0 < 100), throttle should stop
+          return 0L;
+        }
+      });
+      Mockito.when(spyClient.getChannelCache()).thenReturn(mockCache);
+
+      SnowflakeStreamingIngestChannelInternal<StubChunkData> channel =
+          new SnowflakeStreamingIngestChannelInternal<>(
+              "channel",
+              "db",
+              "schema",
+              "table",
+              "0",
+              0L,
+              0L,
+              spyClient,
+              "key",
+              1234L,
+              OpenChannelRequest.OnErrorOption.CONTINUE,
+              UTC,
+              null /* offsetTokenVerificationFunction */,
+              enableIcebergStreaming
+                  ? ParquetProperties.WriterVersion.PARQUET_2_0
+                  : ParquetProperties.WriterVersion.PARQUET_1_0);
+
+      // Verify the mock setup
+      Assert.assertEquals(100L, spyClient.getParameterProvider().getTaskBufferTotalLimitBytes());
+      Assert.assertTrue(spyClient.getParameterProvider().isEnableDynamicFlush());
+
+      // Record start time
+      long startTime = System.currentTimeMillis();
+
+      // Run throttle - it should block initially then release after buffer "drains"
+      channel.throttleInsertIfNeeded(memoryInfoProvider);
+
+      long elapsedTime = System.currentTimeMillis() - startTime;
+
+      // Verify that throttle was triggered (took at least some time due to retries)
+      // With 50ms interval and ~3 retries before buffer drains, should take ~150ms
+      Assert.assertTrue(
+          "Throttle should have blocked for at least 100ms due to buffer limit, but took " + elapsedTime + "ms",
+          elapsedTime >= 100L);
+
+      // Verify the mock was called multiple times (throttle retried)
+      Assert.assertTrue(
+          "getRowBufferSize should have been called multiple times during throttle, called " + callCount[0] + " times",
+          callCount[0] > callsBeforeBufferDrains);
+    }
+  }
 }

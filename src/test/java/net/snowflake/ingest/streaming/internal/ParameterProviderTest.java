@@ -458,4 +458,107 @@ public class ParameterProviderTest {
         TestUtils.createParameterProvider(parameterMap, prop, enableIcebergStreaming);
     Assert.assertFalse(parameterProvider.isEnableNewJsonParsingLogic());
   }
+
+  @Test
+  public void testEnableDynamicFlushDefaultValue() {
+    ParameterProvider parameterProvider = TestUtils.createParameterProvider(enableIcebergStreaming);
+    Assert.assertEquals(
+        ParameterProvider.ENABLE_DYNAMIC_FLUSH_DEFAULT, parameterProvider.isEnableDynamicFlush());
+    Assert.assertFalse(parameterProvider.isEnableDynamicFlush());
+  }
+
+  @Test
+  public void testEnableDynamicFlushSetToTrue() {
+    Properties prop = new Properties();
+    Map<String, Object> parameterMap = getStartingParameterMap();
+    parameterMap.put(ParameterProvider.ENABLE_DYNAMIC_FLUSH, true);
+    ParameterProvider parameterProvider =
+        TestUtils.createParameterProvider(parameterMap, prop, enableIcebergStreaming);
+    Assert.assertTrue(parameterProvider.isEnableDynamicFlush());
+  }
+
+  @Test
+  public void testEnableDynamicFlushSetToFalse() {
+    Properties prop = new Properties();
+    Map<String, Object> parameterMap = getStartingParameterMap();
+    parameterMap.put(ParameterProvider.ENABLE_DYNAMIC_FLUSH, false);
+    ParameterProvider parameterProvider =
+        TestUtils.createParameterProvider(parameterMap, prop, enableIcebergStreaming);
+    Assert.assertFalse(parameterProvider.isEnableDynamicFlush());
+  }
+
+  @Test
+  public void testEnableDynamicFlushAsString() {
+    Properties prop = new Properties();
+    Map<String, Object> parameterMap = getStartingParameterMap();
+    parameterMap.put(ParameterProvider.ENABLE_DYNAMIC_FLUSH, "true");
+    ParameterProvider parameterProvider =
+        TestUtils.createParameterProvider(parameterMap, prop, enableIcebergStreaming);
+    Assert.assertTrue(parameterProvider.isEnableDynamicFlush());
+  }
+
+  @Test
+  public void testTaskBufferTotalLimitBytesDefaultValue() {
+    ParameterProvider parameterProvider = TestUtils.createParameterProvider(enableIcebergStreaming);
+    Assert.assertEquals(
+        ParameterProvider.TASK_BUFFER_TOTAL_LIMIT_BYTES_DEFAULT,
+        parameterProvider.getTaskBufferTotalLimitBytes());
+    Assert.assertEquals(524288000L, parameterProvider.getTaskBufferTotalLimitBytes()); // 500 MB
+  }
+
+  @Test
+  public void testTaskBufferTotalLimitBytesCustomValue() {
+    Properties prop = new Properties();
+    Map<String, Object> parameterMap = getStartingParameterMap();
+    parameterMap.put(ParameterProvider.TASK_BUFFER_TOTAL_LIMIT_BYTES, 100000000L); // 100 MB
+    ParameterProvider parameterProvider =
+        TestUtils.createParameterProvider(parameterMap, prop, enableIcebergStreaming);
+    Assert.assertEquals(100000000L, parameterProvider.getTaskBufferTotalLimitBytes());
+  }
+
+  @Test
+  public void testTaskBufferTotalLimitBytesAsString() {
+    Properties prop = new Properties();
+    Map<String, Object> parameterMap = getStartingParameterMap();
+    parameterMap.put(ParameterProvider.TASK_BUFFER_TOTAL_LIMIT_BYTES, "200000000");
+    ParameterProvider parameterProvider =
+        TestUtils.createParameterProvider(parameterMap, prop, enableIcebergStreaming);
+    Assert.assertEquals(200000000L, parameterProvider.getTaskBufferTotalLimitBytes());
+  }
+
+  @Test
+  public void testTaskBufferTotalLimitBytesFromProperties() {
+    Properties prop = new Properties();
+    prop.put(ParameterProvider.TASK_BUFFER_TOTAL_LIMIT_BYTES, 300000000L);
+    ParameterProvider parameterProvider =
+        TestUtils.createParameterProvider(null, prop, enableIcebergStreaming);
+    Assert.assertEquals(300000000L, parameterProvider.getTaskBufferTotalLimitBytes());
+  }
+
+  @Test
+  public void testEnableDynamicFlushFromProperties() {
+    Properties prop = new Properties();
+    prop.put(ParameterProvider.ENABLE_DYNAMIC_FLUSH, true);
+    ParameterProvider parameterProvider =
+        TestUtils.createParameterProvider(null, prop, enableIcebergStreaming);
+    Assert.assertTrue(parameterProvider.isEnableDynamicFlush());
+  }
+
+  @Test
+  public void testDynamicFlushParametersOverrideProperties() {
+    Properties prop = new Properties();
+    prop.put(ParameterProvider.ENABLE_DYNAMIC_FLUSH, false);
+    prop.put(ParameterProvider.TASK_BUFFER_TOTAL_LIMIT_BYTES, 100000000L);
+
+    Map<String, Object> parameterMap = new HashMap<>();
+    parameterMap.put(ParameterProvider.ENABLE_DYNAMIC_FLUSH, true);
+    parameterMap.put(ParameterProvider.TASK_BUFFER_TOTAL_LIMIT_BYTES, 200000000L);
+
+    ParameterProvider parameterProvider =
+        TestUtils.createParameterProvider(parameterMap, prop, enableIcebergStreaming);
+
+    // Parameter overrides should take precedence over properties
+    Assert.assertTrue(parameterProvider.isEnableDynamicFlush());
+    Assert.assertEquals(200000000L, parameterProvider.getTaskBufferTotalLimitBytes());
+  }
 }
