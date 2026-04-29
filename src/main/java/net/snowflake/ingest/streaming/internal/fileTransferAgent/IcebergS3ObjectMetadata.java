@@ -4,10 +4,10 @@
 
 package net.snowflake.ingest.streaming.internal.fileTransferAgent;
 
+import com.amazonaws.services.s3.model.ObjectMetadata;
 import java.util.Map;
 import net.snowflake.client.jdbc.SnowflakeUtil;
 import net.snowflake.client.jdbc.cloud.storage.StorageObjectMetadata;
-import net.snowflake.client.jdbc.internal.amazonaws.services.s3.model.ObjectMetadata;
 
 /**
  * s3 implementation of platform independent StorageObjectMetadata interface, wraps an S3
@@ -59,7 +59,9 @@ public class IcebergS3ObjectMetadata implements StorageObjectMetadata {
     return objectMetadata.getContentEncoding();
   }
 
-  /** @return Returns the encapsulated AWS S3 metadata object */
+  /**
+   * @return Returns the encapsulated AWS S3 metadata object
+   */
   ObjectMetadata getS3ObjectMetadata() {
     return objectMetadata;
   }
