@@ -5,10 +5,12 @@
 package net.snowflake.ingest.streaming.internal;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.annotations.VisibleForTesting;
 import java.util.Map;
 
 /** Class used to deserialized volume information response by server */
-class FileLocationInfo {
+@VisibleForTesting
+public class FileLocationInfo {
   /** The stage type */
   @JsonProperty("locationType")
   private String locationType;
@@ -53,7 +55,18 @@ class FileLocationInfo {
   @JsonProperty("volumeHash")
   private String volumeHash;
 
-  String getLocationType() {
+  /** Whether to use virtual URL for the stage, required for GCS stage in SCPS */
+  @JsonProperty("useVirtualUrl")
+  private boolean useVirtualUrl;
+
+  @JsonProperty("volumeEncryptionMode")
+  private VolumeEncryptionMode volumeEncryptionMode;
+
+  @JsonProperty("encryptionKmsKeyId")
+  private String encryptionKmsKeyId;
+
+  @VisibleForTesting
+  public String getLocationType() {
     return locationType;
   }
 
@@ -139,5 +152,31 @@ class FileLocationInfo {
 
   void setVolumeHash(String volumeHash) {
     this.volumeHash = volumeHash;
+  }
+
+  boolean getUseVirtualUrl() {
+    return this.useVirtualUrl;
+  }
+
+  void setUseVirtualUrl(boolean useVirtualUrl) {
+    this.useVirtualUrl = useVirtualUrl;
+  }
+
+  @VisibleForTesting
+  public VolumeEncryptionMode getVolumeEncryptionMode() {
+    return this.volumeEncryptionMode;
+  }
+
+  void setVolumeEncryptionMode(VolumeEncryptionMode volumeEncryptionMode) {
+    this.volumeEncryptionMode = volumeEncryptionMode;
+  }
+
+  @VisibleForTesting
+  public String getEncryptionKmsKeyId() {
+    return this.encryptionKmsKeyId;
+  }
+
+  void setEncryptionKmsKeyId(String encryptionKmsKeyId) {
+    this.encryptionKmsKeyId = encryptionKmsKeyId;
   }
 }

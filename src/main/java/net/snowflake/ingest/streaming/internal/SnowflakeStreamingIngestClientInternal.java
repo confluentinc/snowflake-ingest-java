@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024 Snowflake Computing Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Snowflake Computing Inc. All rights reserved.
  */
 
 package net.snowflake.ingest.streaming.internal;
@@ -53,8 +53,6 @@ import java.util.stream.Collectors;
 import javax.management.MalformedObjectNameException;
 import javax.management.ObjectName;
 import net.snowflake.client.core.SFSessionProperty;
-import net.snowflake.client.jdbc.internal.apache.http.client.utils.URIBuilder;
-import net.snowflake.client.jdbc.internal.apache.http.impl.client.CloseableHttpClient;
 import net.snowflake.ingest.connection.IngestResponseException;
 import net.snowflake.ingest.connection.OAuthCredential;
 import net.snowflake.ingest.connection.RequestBuilder;
@@ -72,6 +70,8 @@ import net.snowflake.ingest.utils.ParameterProvider;
 import net.snowflake.ingest.utils.SFException;
 import net.snowflake.ingest.utils.SnowflakeURL;
 import net.snowflake.ingest.utils.Utils;
+import org.apache.http.client.utils.URIBuilder;
+import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.parquet.column.ParquetProperties;
 
 /**
@@ -245,14 +245,13 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
 
     this.snowflakeServiceClient = new SnowflakeServiceClient(this.httpClient, this.requestBuilder);
 
-    this.storageManager =
-        parameterProvider.isEnableIcebergStreaming()
-            ? new SubscopedTokenExternalVolumeManager(
-                this.role, this.name, this.snowflakeServiceClient)
-            : new InternalStageManager(
-                isTestMode, this.role, this.name, this.snowflakeServiceClient);
-
     try {
+      this.storageManager =
+          parameterProvider.isEnableIcebergStreaming()
+              ? new SubscopedTokenExternalVolumeManager(
+                  this.role, this.name, this.snowflakeServiceClient)
+              : new InternalStageManager(
+                  isTestMode, this.role, this.name, this.snowflakeServiceClient);
       this.flushService =
           new FlushService<>(this, this.channelCache, this.storageManager, this.isTestMode);
     } catch (Exception e) {
@@ -321,7 +320,9 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
     return this.role;
   }
 
-  /** @return a boolean to indicate whether the client is closed or not */
+  /**
+   * @return a boolean to indicate whether the client is closed or not
+   */
   @Override
   public boolean isClosed() {
     return isClosed;
@@ -408,6 +409,25 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
                     : ParquetProperties.WriterVersion.PARQUET_1_0)
             .build();
 
+    FullyQualifiedTableName fullyQualifiedTableName =
+        new FullyQualifiedTableName(
+            response.getDBName(), response.getSchemaName(), response.getTableName());
+    Long encryptionKeyId = response.getEncryptionKeyId();
+    String encryptionKey = response.getEncryptionKey();
+    if (encryptionKeyId != null && encryptionKey != null && !encryptionKey.isEmpty()) {
+      // If per table key cache already contains an entry, update it because the cached entry may be
+      // stale, and it takes priority over the key stored in SnowflakeStreamingIngestChannel object.
+      encryptionKeysPerTable.computeIfPresent(
+          fullyQualifiedTableName,
+          (table, key) ->
+              new EncryptionKey(
+                  fullyQualifiedTableName.getDatabaseName(),
+                  fullyQualifiedTableName.getSchemaName(),
+                  fullyQualifiedTableName.getTableName(),
+                  encryptionKey,
+                  encryptionKeyId));
+    }
+
     // Setup the row buffer schema
     channel.setupSchema(response.getTableColumns());
 
@@ -484,10 +504,11 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
   }
 
   /**
-   * Fetch channels status from Snowflake
+   * Fetch the status of one or more Channels from Snowflake
    *
-   * @param channels a list of channels that we want to get the status on
+   * @param channels a list of channels that we want to get the status of
    * @return a ChannelsStatusResponse object
+   * @throws SFException if the caller cannot communicate with Snowflake
    */
   ChannelsStatusResponse getChannelsStatus(
       List<SnowflakeStreamingIngestChannelInternal<?>> channels) {
@@ -645,12 +666,18 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
                                     channelStatus -> {
                                       if (channelStatus.getStatusCode() != RESPONSE_SUCCESS) {
                                         // If the chunk queue is full, we wait and retry the chunks
-                                        if ((channelStatus.getStatusCode()
+                                        boolean retryQueueFull =
+                                            channelStatus.getStatusCode()
                                                     == RESPONSE_ERR_ENQUEUE_TABLE_CHUNK_QUEUE_FULL
-                                                || channelStatus.getStatusCode()
-                                                    == RESPONSE_ERR_GENERAL_EXCEPTION_RETRY_REQUEST)
-                                            && executionCount
-                                                < MAX_STREAMING_INGEST_API_CHANNEL_RETRY) {
+                                                && executionCount
+                                                    < parameterProvider
+                                                        .getMaxChannelWriteRetryCountOnQueueFull();
+                                        boolean retryGenericRetryableException =
+                                            channelStatus.getStatusCode()
+                                                    == RESPONSE_ERR_GENERAL_EXCEPTION_RETRY_REQUEST
+                                                && executionCount
+                                                    < MAX_STREAMING_INGEST_API_CHANNEL_RETRY;
+                                        if (retryQueueFull || retryGenericRetryableException) {
                                           queueFullChunks.add(chunkStatus);
                                         } else {
                                           String errorMessage =
@@ -794,7 +821,18 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
   }
 
   /**
-   * Flush all data in memory to persistent storage and register with a Snowflake table
+   * Flush all data in memory across all channels to persistent storage and registers them to a
+   * Snowflake table. This API is still in beta and may be subject to change.
+   *
+   * @return future which will be complete when the flush the data is registered
+   */
+  @Override
+  public CompletableFuture<Void> flush() {
+    return flush(false);
+  }
+
+  /**
+   * Flush all data in memory to persistent storage and registers them to a Snowflake table.
    *
    * @param closing whether the flush is called as part of client closing
    * @return future which will be complete when the flush the data is registered
@@ -819,16 +857,6 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
   /** Get whether we're running under test mode */
   boolean isTestMode() {
     return this.isTestMode;
-  }
-
-  /** Get the http client */
-  CloseableHttpClient getHttpClient() {
-    return this.httpClient;
-  }
-
-  /** Get the request builder */
-  RequestBuilder getRequestBuilder() {
-    return this.requestBuilder;
   }
 
   /** Get the channel cache */
@@ -1137,5 +1165,10 @@ public class SnowflakeStreamingIngestClientInternal<T> implements SnowflakeStrea
   // TESTING ONLY - inject the storage manager
   public void setStorageManager(IStorageManager storageManager) {
     this.storageManager = storageManager;
+  }
+
+  @VisibleForTesting
+  public IStorageManager getStorageManager() {
+    return this.storageManager;
   }
 }

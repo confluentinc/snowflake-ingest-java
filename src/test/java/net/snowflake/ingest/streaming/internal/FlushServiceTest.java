@@ -41,6 +41,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.TimeZone;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -52,6 +53,7 @@ import net.snowflake.ingest.streaming.OpenChannelRequest;
 import net.snowflake.ingest.utils.Constants;
 import net.snowflake.ingest.utils.Cryptor;
 import net.snowflake.ingest.utils.ErrorCode;
+import net.snowflake.ingest.utils.Pair;
 import net.snowflake.ingest.utils.ParameterProvider;
 import net.snowflake.ingest.utils.SFException;
 import org.apache.parquet.column.ParquetProperties;
@@ -167,6 +169,7 @@ public class FlushServiceTest {
       List<List<ChannelData<T>>> blobData = Collections.singletonList(channelData);
       return flushService.buildAndUpload(
           new BlobPath("file_name" /* uploadPath */, "file_name" /* fileRegistrationPath */),
+          FileMetadataTestingOverrides.none(),
           blobData,
           blobData.get(0).get(0).getChannelContext().getFullyQualifiedTableName(),
           encryptionKeysPerTable);
@@ -657,7 +660,12 @@ public class FlushServiceTest {
     if (!enableIcebergStreaming) {
       flushService.flush(true).get();
       Mockito.verify(flushService, Mockito.atLeast(2))
-          .buildAndUpload(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any());
+          .buildAndUpload(
+              Mockito.any(),
+              Mockito.eq(FileMetadataTestingOverrides.none()),
+              Mockito.any(),
+              Mockito.any(),
+              Mockito.any());
     }
   }
 
@@ -710,7 +718,12 @@ public class FlushServiceTest {
       // Force = true flushes
       flushService.flush(true).get();
       Mockito.verify(flushService, Mockito.atLeast(2))
-          .buildAndUpload(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any());
+          .buildAndUpload(
+              Mockito.any(),
+              Mockito.eq(FileMetadataTestingOverrides.none()),
+              Mockito.any(),
+              Mockito.any(),
+              Mockito.any());
     }
   }
 
@@ -748,7 +761,12 @@ public class FlushServiceTest {
       // Force = true flushes
       flushService.flush(true).get();
       Mockito.verify(flushService, Mockito.times(2))
-          .buildAndUpload(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any());
+          .buildAndUpload(
+              Mockito.any(),
+              Mockito.eq(FileMetadataTestingOverrides.none()),
+              Mockito.any(),
+              Mockito.any(),
+              Mockito.any());
     }
   }
 
@@ -796,7 +814,12 @@ public class FlushServiceTest {
     ArgumentCaptor<List<List<ChannelData<List<List<Object>>>>>> blobDataCaptor =
         ArgumentCaptor.forClass(List.class);
     Mockito.verify(flushService, Mockito.times(expectedBlobs))
-        .buildAndUpload(Mockito.any(), blobDataCaptor.capture(), Mockito.any(), Mockito.any());
+        .buildAndUpload(
+            Mockito.any(),
+            Mockito.eq(FileMetadataTestingOverrides.none()),
+            blobDataCaptor.capture(),
+            Mockito.any(),
+            Mockito.any());
 
     // 1. list => blobs; 2. list => chunks; 3. list => channels; 4. list => rows, 5. list => columns
     List<List<List<ChannelData<List<List<Object>>>>>> allUploadedBlobs =
@@ -844,7 +867,12 @@ public class FlushServiceTest {
     ArgumentCaptor<List<List<ChannelData<List<List<Object>>>>>> blobDataCaptor =
         ArgumentCaptor.forClass(List.class);
     Mockito.verify(flushService, Mockito.atLeast(2))
-        .buildAndUpload(Mockito.any(), blobDataCaptor.capture(), Mockito.any(), Mockito.any());
+        .buildAndUpload(
+            Mockito.any(),
+            Mockito.eq(FileMetadataTestingOverrides.none()),
+            blobDataCaptor.capture(),
+            Mockito.any(),
+            Mockito.any());
 
     // 1. list => blobs; 2. list => chunks; 3. list => channels; 4. list => rows, 5. list => columns
     List<List<List<ChannelData<List<List<Object>>>>>> allUploadedBlobs =
@@ -1274,8 +1302,12 @@ public class FlushServiceTest {
 
   @Test
   public void testEncryptionDecryption()
-      throws InvalidAlgorithmParameterException, NoSuchPaddingException, IllegalBlockSizeException,
-          NoSuchAlgorithmException, BadPaddingException, InvalidKeyException {
+      throws InvalidAlgorithmParameterException,
+          NoSuchPaddingException,
+          IllegalBlockSizeException,
+          NoSuchAlgorithmException,
+          BadPaddingException,
+          InvalidKeyException {
     byte[] data = "testEncryptionDecryption".getBytes(StandardCharsets.UTF_8);
     String encryptionKey =
         Base64.getEncoder().encodeToString("encryption_key".getBytes(StandardCharsets.UTF_8));
@@ -1285,6 +1317,31 @@ public class FlushServiceTest {
     byte[] decryptedData = Cryptor.decrypt(encryptedData, encryptionKey, diversifier, 0);
 
     Assert.assertArrayEquals(data, decryptedData);
+  }
+
+  @Test
+  public void testisMaxRegistrationQueueSizeExceeded() {
+    int threshold = 10;
+    TestContext<List<List<Object>>> testContext = testContextFactory.create();
+    testContext.setParameterOverride(
+        Collections.singletonMap(ParameterProvider.MAX_REGISTRATION_QUEUE_SIZE, threshold));
+    FlushService fs = testContext.flushService;
+    Pair<FlushService.BlobData<StubChunkData>, CompletableFuture<BlobMetadata>> blob =
+        new Pair<>(
+            new FlushService.BlobData<>("test", null),
+            CompletableFuture.completedFuture(new BlobMetadata("path", "md5", null, null)));
+
+    for (int i = 0; i < threshold; i++) {
+      fs.getRegisterService().addBlobs(Collections.singletonList(blob));
+    }
+    Assert.assertFalse(
+        "Throttling should not occur when queued requests are below the threshold",
+        fs.isMaxRegistrationQueueSizeExceeded());
+
+    fs.getRegisterService().addBlobs(Collections.singletonList(blob));
+    Assert.assertTrue(
+        "Throttling should occur when queued requests are above the threshold",
+        fs.isMaxRegistrationQueueSizeExceeded());
   }
 
   private Timer setupTimer(long expectedLatencyMs) {

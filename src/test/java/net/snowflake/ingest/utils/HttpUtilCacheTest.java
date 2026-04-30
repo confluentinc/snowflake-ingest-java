@@ -5,7 +5,7 @@ import static org.junit.Assert.assertSame;
 
 import java.util.Properties;
 import net.snowflake.client.core.SFSessionProperty;
-import net.snowflake.client.jdbc.internal.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.CloseableHttpClient;
 import org.junit.After;
 import org.junit.Test;
 
