@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024 Snowflake Computing Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Snowflake Computing Inc. All rights reserved.
  */
 
 package net.snowflake.ingest.streaming.internal;
@@ -16,6 +16,8 @@ import static net.snowflake.ingest.utils.HttpUtil.generateProxyPropertiesForJDBC
 import static net.snowflake.ingest.utils.HttpUtil.shouldBypassProxy;
 import static org.mockito.Mockito.times;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -37,19 +39,16 @@ import net.snowflake.client.jdbc.SnowflakeFileTransferConfig;
 import net.snowflake.client.jdbc.SnowflakeFileTransferMetadataV1;
 import net.snowflake.client.jdbc.SnowflakeSQLException;
 import net.snowflake.client.jdbc.cloud.storage.StageInfo;
-import net.snowflake.client.jdbc.internal.amazonaws.util.IOUtils;
-import net.snowflake.client.jdbc.internal.apache.http.HttpEntity;
-import net.snowflake.client.jdbc.internal.apache.http.StatusLine;
-import net.snowflake.client.jdbc.internal.apache.http.client.methods.CloseableHttpResponse;
-import net.snowflake.client.jdbc.internal.apache.http.entity.BasicHttpEntity;
-import net.snowflake.client.jdbc.internal.apache.http.impl.client.CloseableHttpClient;
-import net.snowflake.client.jdbc.internal.fasterxml.jackson.databind.JsonNode;
-import net.snowflake.client.jdbc.internal.fasterxml.jackson.databind.ObjectMapper;
-import net.snowflake.client.jdbc.internal.google.common.util.concurrent.ThreadFactoryBuilder;
 import net.snowflake.ingest.TestUtils;
 import net.snowflake.ingest.connection.RequestBuilder;
 import net.snowflake.ingest.utils.ErrorCode;
 import net.snowflake.ingest.utils.SFException;
+import org.apache.commons.lang3.concurrent.BasicThreadFactory;
+import org.apache.http.HttpEntity;
+import org.apache.http.StatusLine;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.entity.BasicHttpEntity;
+import org.apache.http.impl.client.CloseableHttpClient;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -145,8 +144,9 @@ public class InternalStageTest {
             InternalStageManager.NO_TABLE_REF,
             false /* useIcebergFileTransferAgent */,
             new SnowflakeFileTransferMetadataWithAge(
-                originalMetadata, Optional.of(System.currentTimeMillis())),
-            1);
+                originalMetadata, Optional.of(System.currentTimeMillis()), "test/path"),
+            null /* fileLocationInfo */,
+            1 /* maxUploadRetries */);
     PowerMockito.mockStatic(SnowflakeFileTransferAgent.class);
 
     final ArgumentCaptor<SnowflakeFileTransferConfig> captor =
@@ -172,7 +172,9 @@ public class InternalStageTest {
         capturedMetadata.getStageInfo().getStageType());
 
     InputStream capturedInput = capturedConfig.getUploadStream();
-    Assert.assertEquals("Hello Upload", IOUtils.toString(capturedInput));
+    final byte[] captured = new byte[12];
+    capturedInput.read(captured);
+    Assert.assertArrayEquals("Hello Upload".getBytes(), captured);
   }
 
   @Test
@@ -190,8 +192,9 @@ public class InternalStageTest {
                 InternalStageManager.NO_TABLE_REF,
                 false /* useIcebergFileTransferAgent */,
                 new SnowflakeFileTransferMetadataWithAge(
-                    fullFilePath, Optional.of(System.currentTimeMillis())),
-                1));
+                    fullFilePath, Optional.of(System.currentTimeMillis()), "test/path"),
+                null /* fileLocationInfo */,
+                1 /* maxUploadRetries */));
     Mockito.doReturn(true).when(stage).isLocalFS();
 
     stage.put(
@@ -223,7 +226,8 @@ public class InternalStageTest {
             InternalStageManager.NO_TABLE_REF,
             false /* useIcebergFileTransferAgent */,
             new SnowflakeFileTransferMetadataWithAge(
-                originalMetadata, Optional.of(System.currentTimeMillis())),
+                originalMetadata, Optional.of(System.currentTimeMillis()), "test/path"),
+            null /* fileLocationInfo */,
             maxUploadRetryCount);
     PowerMockito.mockStatic(SnowflakeFileTransferAgent.class);
     SnowflakeSQLException e =
@@ -259,7 +263,9 @@ public class InternalStageTest {
         capturedMetadata.getStageInfo().getStageType());
 
     InputStream capturedInput = capturedConfig.getUploadStream();
-    Assert.assertEquals("Hello Upload", IOUtils.toString(capturedInput));
+    final byte[] captured = new byte[12];
+    capturedInput.read(captured);
+    Assert.assertArrayEquals("Hello Upload".getBytes(), captured);
   }
 
   @Test
@@ -283,8 +289,9 @@ public class InternalStageTest {
                 InternalStageManager.NO_TABLE_REF,
                 false /* useIcebergFileTransferAgent */,
                 new SnowflakeFileTransferMetadataWithAge(
-                    originalMetadata, Optional.of(System.currentTimeMillis())),
-                1));
+                    originalMetadata, Optional.of(System.currentTimeMillis()), "test/path"),
+                null /* fileLocationInfo */,
+                1 /* maxUploadRetries */));
     PowerMockito.mockStatic(SnowflakeFileTransferAgent.class);
     SnowflakeFileTransferMetadataV1 metaMock = Mockito.mock(SnowflakeFileTransferMetadataV1.class);
 
@@ -324,7 +331,8 @@ public class InternalStageTest {
             InternalStageManager.NO_TABLE_REF,
             false /* useIcebergFileTransferAgent */,
             (SnowflakeFileTransferMetadataWithAge) null,
-            1);
+            null /* fileLocationInfo */,
+            1 /* maxUploadRetries */);
 
     SnowflakeFileTransferMetadataWithAge metadataWithAge = stage.refreshSnowflakeMetadata(true);
 
@@ -422,7 +430,8 @@ public class InternalStageTest {
             InternalStageManager.NO_TABLE_REF,
             false /* useIcebergFileTransferAgent */,
             (SnowflakeFileTransferMetadataWithAge) null,
-            1);
+            null /* fileLocationInfo */,
+            1 /* maxUploadRetries */);
 
     SnowflakeFileTransferMetadataV1 metadata = stage.fetchSignedURL("path/fileName");
 
@@ -470,10 +479,11 @@ public class InternalStageTest {
             InternalStageManager.NO_TABLE_REF,
             false /* useIcebergFileTransferAgent */,
             (SnowflakeFileTransferMetadataWithAge) null,
-            1);
+            null /* fileLocationInfo */,
+            1 /* maxUploadRetries */);
 
     ThreadFactory buildUploadThreadFactory =
-        new ThreadFactoryBuilder().setNameFormat("ingest-build-upload-thread-%d").build();
+        new BasicThreadFactory.Builder().namingPattern("ingest-build-upload-thread-%d").build();
     int buildUploadThreadCount = 2;
     ExecutorService workers =
         Executors.newFixedThreadPool(buildUploadThreadCount, buildUploadThreadFactory);
@@ -539,18 +549,12 @@ public class InternalStageTest {
           nonProxyHosts, props.get(SFSessionProperty.NON_PROXY_HOSTS.getPropertyKey()));
     } finally {
       // Cleanup
-      if (oldUseProxy != null) {
-        System.setProperty(USE_PROXY, oldUseProxy);
-        System.setProperty(PROXY_HOST, oldProxyHost);
-        System.setProperty(PROXY_PORT, oldProxyPort);
-      }
-      if (oldUser != null) {
-        System.setProperty(HTTP_PROXY_USER, oldUser);
-        System.setProperty(HTTP_PROXY_PASSWORD, oldPassword);
-      }
-      if (oldNonProxyHosts != null) {
-        System.setProperty(NON_PROXY_HOSTS, oldNonProxyHosts);
-      }
+      resetProperty(USE_PROXY, oldUseProxy);
+      resetProperty(PROXY_HOST, oldProxyHost);
+      resetProperty(PROXY_PORT, oldProxyPort);
+      resetProperty(HTTP_PROXY_USER, oldUser);
+      resetProperty(HTTP_PROXY_PASSWORD, oldPassword);
+      resetProperty(NON_PROXY_HOSTS, oldNonProxyHosts);
     }
   }
 
@@ -584,9 +588,7 @@ public class InternalStageTest {
     Assert.assertFalse(shouldBypassProxy(accountUnderscoreName));
     Assert.assertFalse(shouldBypassProxy(accountNamePrivateLink));
 
-    if (oldNonProxyHosts != null) {
-      System.setProperty(NON_PROXY_HOSTS, oldNonProxyHosts);
-    }
+    resetProperty(NON_PROXY_HOSTS, oldNonProxyHosts);
   }
 
   @Test
@@ -610,7 +612,8 @@ public class InternalStageTest {
             InternalStageManager.NO_TABLE_REF,
             false /* useIcebergFileTransferAgent */,
             new SnowflakeFileTransferMetadataWithAge(
-                originalMetadata, Optional.of(System.currentTimeMillis())),
+                originalMetadata, Optional.of(System.currentTimeMillis()), "test/path"),
+            null /* fileLocationInfo */,
             maxUploadRetryCount);
     PowerMockito.mockStatic(SnowflakeFileTransferAgent.class);
     SnowflakeSQLException e =
@@ -655,12 +658,22 @@ public class InternalStageTest {
         capturedMetadata.getStageInfo().getStageType());
 
     InputStream capturedInput = capturedConfig.getUploadStream();
-    Assert.assertEquals("Hello Upload", IOUtils.toString(capturedInput));
+    final byte[] captured = new byte[12];
+    capturedInput.read(captured);
+    Assert.assertArrayEquals("Hello Upload".getBytes(), captured);
   }
 
   private HttpEntity createHttpEntity(String content) {
     BasicHttpEntity entity = new BasicHttpEntity();
     entity.setContent(new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8)));
     return entity;
+  }
+
+  private void resetProperty(String key, String oldValue) {
+    if (oldValue != null) {
+      System.setProperty(key, oldValue);
+    } else {
+      System.clearProperty(key);
+    }
   }
 }

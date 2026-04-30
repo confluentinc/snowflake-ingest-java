@@ -19,13 +19,13 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import net.snowflake.client.jdbc.internal.apache.http.Header;
-import net.snowflake.client.jdbc.internal.apache.http.HttpHeaders;
-import net.snowflake.client.jdbc.internal.apache.http.client.methods.HttpPost;
 import net.snowflake.ingest.connection.HistoryRangeResponse;
 import net.snowflake.ingest.connection.HistoryResponse;
 import net.snowflake.ingest.connection.IngestResponse;
 import net.snowflake.ingest.utils.StagedFileWrapper;
+import org.apache.http.Header;
+import org.apache.http.HttpHeaders;
+import org.apache.http.client.methods.HttpPost;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Ignore;
@@ -178,7 +178,8 @@ public class SimpleIngestIT {
   }
 
   private void getHistoryAndAssertLoad(SimpleIngestManager manager, String test_file_name_2)
-      throws InterruptedException, java.util.concurrent.ExecutionException,
+      throws InterruptedException,
+          java.util.concurrent.ExecutionException,
           java.util.concurrent.TimeoutException {
     // keeps track of whether we've loaded the file
     boolean loaded = false;

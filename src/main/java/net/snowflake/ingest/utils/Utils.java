@@ -7,7 +7,6 @@ package net.snowflake.ingest.utils;
 import static net.snowflake.ingest.utils.Constants.USER;
 
 import com.codahale.metrics.Timer;
-import io.netty.util.internal.PlatformDependent;
 import java.io.IOException;
 import java.io.StringReader;
 import java.lang.management.BufferPoolMXBean;
@@ -382,9 +381,7 @@ public class Utils {
 
     Runtime runtime = Runtime.getRuntime();
     logger.logInfo(
-        "Max direct memory={}, max runtime memory={}, total runtime memory={}, free runtime"
-            + " memory={}",
-        PlatformDependent.maxDirectMemory(),
+        "Max runtime memory={}, total runtime memory={}, free runtime" + " memory={}",
         runtime.maxMemory(),
         runtime.totalMemory(),
         runtime.freeMemory());
@@ -499,5 +496,28 @@ public class Utils {
     }
 
     return twoHexChars;
+  }
+
+  public static String stripTrailingNulls(String key) {
+    int end = key.length();
+    while (end > 0 && key.charAt(end - 1) == '\u0000') {
+      end--;
+    }
+    return end == key.length() ? key : key.substring(0, end);
+  }
+
+  /**
+   * Extracts the file name from a path string.
+   *
+   * @param path the file path (e.g., "dir1/dir2/file.txt")
+   * @return the file name (e.g., "file.txt") or null if path is null/empty
+   */
+  public static String extractFileShortName(String path) {
+    if (path == null || path.isEmpty()) {
+      return null;
+    }
+
+    int lastSlash = path.lastIndexOf('/');
+    return lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
   }
 }
