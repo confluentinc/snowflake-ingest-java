@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2023 Snowflake Computing Inc. All rights reserved.
+ * Copyright (c) 2012-2025 Snowflake Computing Inc. All rights reserved.
  */
 
 package net.snowflake.ingest.connection;
@@ -15,18 +15,18 @@ import java.security.KeyPair;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import net.snowflake.client.jdbc.internal.apache.http.HttpHeaders;
-import net.snowflake.client.jdbc.internal.apache.http.client.methods.HttpGet;
-import net.snowflake.client.jdbc.internal.apache.http.client.methods.HttpPost;
-import net.snowflake.client.jdbc.internal.apache.http.client.methods.HttpUriRequest;
-import net.snowflake.client.jdbc.internal.apache.http.client.utils.URIBuilder;
-import net.snowflake.client.jdbc.internal.apache.http.entity.ContentType;
-import net.snowflake.client.jdbc.internal.apache.http.entity.StringEntity;
-import net.snowflake.client.jdbc.internal.apache.http.impl.client.CloseableHttpClient;
 import net.snowflake.ingest.utils.ErrorCode;
 import net.snowflake.ingest.utils.SFException;
 import net.snowflake.ingest.utils.SnowflakeURL;
 import net.snowflake.ingest.utils.StagedFileWrapper;
+import org.apache.http.HttpHeaders;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpUriRequest;
+import org.apache.http.client.utils.URIBuilder;
+import org.apache.http.entity.ContentType;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.CloseableHttpClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -110,7 +110,7 @@ public class RequestBuilder {
   // Don't change!
   public static final String CLIENT_NAME = "SnowpipeJavaSDK";
 
-  public static final String DEFAULT_VERSION = "3.0.1";
+  public static final String DEFAULT_VERSION = "4.3.2";
 
   public static final String JAVA_USER_AGENT = "JAVA";
 

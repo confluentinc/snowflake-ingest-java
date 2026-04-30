@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024 Snowflake Computing Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Snowflake Computing Inc. All rights reserved.
  */
 
 package net.snowflake.ingest.streaming.internal;
@@ -38,13 +38,13 @@ import java.util.stream.Collectors;
 import javax.crypto.BadPaddingException;
 import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.NoSuchPaddingException;
-import net.snowflake.client.jdbc.internal.google.common.util.concurrent.ThreadFactoryBuilder;
 import net.snowflake.ingest.utils.Constants;
 import net.snowflake.ingest.utils.ErrorCode;
 import net.snowflake.ingest.utils.Logging;
 import net.snowflake.ingest.utils.Pair;
 import net.snowflake.ingest.utils.SFException;
 import net.snowflake.ingest.utils.Utils;
+import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 
 /**
  * Responsible for flushing data from client to Snowflake tables. When a flush is triggered, it will
@@ -83,13 +83,13 @@ class FlushService<T> {
   private final SnowflakeStreamingIngestClientInternal<T> owningClient;
 
   // Thread to schedule the flush job
-  @VisibleForTesting ScheduledExecutorService flushWorker;
+  ScheduledExecutorService flushWorker;
 
   // Thread to register the blob
-  @VisibleForTesting ExecutorService registerWorker;
+  ExecutorService registerWorker;
 
   // Threads to build and upload the blob
-  @VisibleForTesting ExecutorService buildUploadWorkers;
+  ExecutorService buildUploadWorkers;
 
   // Reference to the channel cache
   private final ChannelCache<T> channelCache;
@@ -105,9 +105,9 @@ class FlushService<T> {
    * blob is not 1. When max chunk in blob is 1, flush service ignores these variables and uses
    * table level last flush time and need flush flag. See {@link ChannelCache.FlushInfo}.
    */
-  @VisibleForTesting volatile long lastFlushTime;
+  volatile long lastFlushTime;
 
-  @VisibleForTesting volatile boolean isNeedFlush;
+  volatile boolean isNeedFlush;
 
   // Indicates whether it's running as part of the test
   private final boolean isTestMode;
@@ -312,7 +312,7 @@ class FlushService<T> {
     String threadNamePrefix = this.owningClient.getParameterProvider().getThreadNamePrefix();
     // Create thread for checking and scheduling flush job
     ThreadFactory flushThreadFactory =
-        new ThreadFactoryBuilder().setNameFormat(threadNamePrefix + "ingest-flush-thread").build();
+        new BasicThreadFactory.Builder().namingPattern(threadNamePrefix + "ingest-flush-thread").build();
     this.flushWorker = Executors.newSingleThreadScheduledExecutor(flushThreadFactory);
     this.flushWorker.scheduleWithFixedDelay(
         () -> {
@@ -360,17 +360,15 @@ class FlushService<T> {
 
     // Create thread for registering blobs
     ThreadFactory registerThreadFactory =
-        new ThreadFactoryBuilder()
-            .setNameFormat(threadNamePrefix + "ingest-register-thread")
-            .build();
+        new BasicThreadFactory
+            .Builder().namingPattern(threadNamePrefix + "ingest-register-thread").build();
     this.registerWorker = Executors.newSingleThreadExecutor(registerThreadFactory);
 
     // Create threads for building and uploading blobs
     // Size: number of available processors * (1 + IO time/CPU time)
     ThreadFactory buildUploadThreadFactory =
-        new ThreadFactoryBuilder()
-            .setNameFormat(threadNamePrefix + "ingest-build-upload-thread-%d")
-            .build();
+        new BasicThreadFactory
+            .Builder().namingPattern(threadNamePrefix + "ingest-build-upload-thread-%d").build();
     int buildUploadThreadCount =
         Math.min(
             Runtime.getRuntime().availableProcessors()
@@ -497,7 +495,8 @@ class FlushService<T> {
       String fullyQualifiedTableName =
           blobData.get(0).get(0).getChannelContext().getFullyQualifiedTableName();
 
-      final BlobPath blobPath = this.storageManager.generateBlobPath(fullyQualifiedTableName);
+      final BlobPath blobPath =
+          this.storageManager.generateBlobPath(fullyQualifiedTableName, /*pathOverride*/ null);
 
       long flushStartMs = System.currentTimeMillis();
       if (this.owningClient.flushLatency != null) {
@@ -517,7 +516,11 @@ class FlushService<T> {
             try {
               BlobMetadata blobMetadata =
                   buildAndUpload(
-                      blobPath, blobData, fullyQualifiedTableName, encryptionKeysPerTable);
+                      blobPath,
+                      FileMetadataTestingOverrides.none(),
+                      blobData,
+                      fullyQualifiedTableName,
+                      encryptionKeysPerTable);
               blobMetadata.getBlobStats().setFlushStartMs(flushStartMs);
               return blobMetadata;
             } catch (Throwable e) {
@@ -600,6 +603,8 @@ class FlushService<T> {
    * Builds and uploads blob to cloud storage.
    *
    * @param blobPath Path of the destination blob in cloud storage
+   * @param fileMetadataTestingOverrides Allows setting a custom file ID and SDK version to be
+   *     embedded for all chunks in storage. Used for testing.
    * @param blobData All the data for one blob. Assumes that all ChannelData in the inner List
    *     belongs to the same table. Will error if this is not the case
    * @param fullyQualifiedTableName the table name of the first channel in the blob, only matters in
@@ -608,11 +613,16 @@ class FlushService<T> {
    */
   BlobMetadata buildAndUpload(
       BlobPath blobPath,
+      FileMetadataTestingOverrides fileMetadataTestingOverrides,
       List<List<ChannelData<T>>> blobData,
       String fullyQualifiedTableName,
       Map<FullyQualifiedTableName, EncryptionKey> encryptionKeysPerTable)
-      throws IOException, NoSuchAlgorithmException, InvalidAlgorithmParameterException,
-          NoSuchPaddingException, IllegalBlockSizeException, BadPaddingException,
+      throws IOException,
+          NoSuchAlgorithmException,
+          InvalidAlgorithmParameterException,
+          NoSuchPaddingException,
+          IllegalBlockSizeException,
+          BadPaddingException,
           InvalidKeyException {
     Timer.Context buildContext = Utils.createTimerContext(this.owningClient.buildLatency);
 
@@ -620,6 +630,7 @@ class FlushService<T> {
     BlobBuilder.Blob blob =
         BlobBuilder.constructBlobAndMetadata(
             blobPath.fileRegistrationPath,
+            fileMetadataTestingOverrides,
             blobData,
             bdecVersion,
             this.owningClient.getInternalParameterProvider(),
@@ -657,13 +668,8 @@ class FlushService<T> {
 
     Timer.Context uploadContext = Utils.createTimerContext(this.owningClient.uploadLatency);
 
-    // The returned etag is non-empty ONLY in case of iceberg uploads. With iceberg files, the XP
-    // scanner expects the
-    // MD5 value to exactly match the etag value in S3. This assumption doesn't hold when multipart
-    // upload kicks in,
-    // causing scan time failures and table corruption. By plugging in the etag value instead of the
-    // md5 value,
-    Optional<String> etag = storage.put(blobPath, blob);
+    // The returned icebergPostUploadMetadata is non-empty if and only if it's iceberg uploads.
+    Optional<IcebergPostUploadMetadata> icebergPostUploadMetadata = storage.put(blobPath, blob);
 
     if (uploadContext != null) {
       blobStats.setUploadDurationMs(uploadContext);
@@ -674,17 +680,22 @@ class FlushService<T> {
     }
 
     logger.logInfo(
-        "Finish uploading blob={}, size={}, timeInMillis={}, etag={}",
+        "Finish uploading blob={}, size={}, timeInMillis={}, icebergPostUploadMetadata={}",
         blobPath.fileRegistrationPath,
         blob.length,
         System.currentTimeMillis() - startTime,
-        etag);
+        icebergPostUploadMetadata);
 
     // at this point we know for sure if the BDEC file has data for more than one chunk, i.e.
     // spans mixed tables or not
     return BlobMetadata.createBlobMetadata(
-        blobPath.fileRegistrationPath,
-        etag.isPresent() ? etag.get() : BlobBuilder.computeMD5(blob),
+        icebergPostUploadMetadata
+            .map(IcebergPostUploadMetadata::getBlobPath)
+            .orElse(blobPath)
+            .fileRegistrationPath,
+        icebergPostUploadMetadata
+            .flatMap(IcebergPostUploadMetadata::getEtag)
+            .orElse(BlobBuilder.computeMD5(blob)),
         bdecVersion,
         metadata,
         blobStats,
@@ -760,7 +771,7 @@ class FlushService<T> {
     boolean throttleOnQueuedTasks = buildAndUpload.getQueue().size() > numProcessors;
     if (throttleOnQueuedTasks) {
       logger.logWarn(
-          "Throttled due too many queue flush tasks (probably because of slow uploading speed),"
+          "Throttled due to too many queue flush tasks (probably because of slow uploading speed),"
               + " client={}, buildUploadWorkers stats={}",
           this.owningClient.getName(),
           this.buildUploadWorkers.toString());
@@ -768,8 +779,29 @@ class FlushService<T> {
     return throttleOnQueuedTasks;
   }
 
+  /** Check if the number of queued registration blobs is bigger than the max allowed */
+  boolean isMaxRegistrationQueueSizeExceeded() {
+    int queueSize = registerService.getBlobsListSize();
+    boolean isQueueSizeExceeded =
+        queueSize > this.owningClient.getParameterProvider().getMaxRegistrationQueueSize();
+    if (isQueueSizeExceeded) {
+      logger.logWarn(
+          "The number of queued registration blobs exceeds the max allowed threshold, client={},"
+              + " size={}",
+          this.owningClient.getName(),
+          queueSize);
+    }
+    return isQueueSizeExceeded;
+  }
+
   /** Get whether we're running under test mode */
   boolean isTestMode() {
     return this.isTestMode;
+  }
+
+  /** Get the register service, used for TEST only */
+  @VisibleForTesting
+  RegisterService<T> getRegisterService() {
+    return this.registerService;
   }
 }

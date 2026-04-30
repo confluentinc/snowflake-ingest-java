@@ -3,6 +3,14 @@ package net.snowflake.ingest.streaming.internal.fileTransferAgent;
 import static net.snowflake.client.jdbc.SnowflakeUtil.getRootCause;
 import static net.snowflake.client.jdbc.SnowflakeUtil.isBlank;
 
+import com.google.api.gax.rpc.FixedHeaderProvider;
+import com.google.cloud.storage.Blob;
+import com.google.cloud.storage.BlobId;
+import com.google.cloud.storage.BlobInfo;
+import com.google.cloud.storage.Storage;
+import com.google.cloud.storage.Storage.BlobWriteOption;
+import com.google.cloud.storage.StorageException;
+import com.google.cloud.storage.StorageOptions;
 import com.google.common.base.Strings;
 import java.io.File;
 import java.io.FileInputStream;
@@ -22,16 +30,10 @@ import net.snowflake.client.jdbc.SnowflakeSQLException;
 import net.snowflake.client.jdbc.SnowflakeSQLLoggedException;
 import net.snowflake.client.jdbc.cloud.storage.StageInfo;
 import net.snowflake.client.jdbc.cloud.storage.StorageObjectMetadata;
-import net.snowflake.client.jdbc.internal.google.api.gax.rpc.FixedHeaderProvider;
-import net.snowflake.client.jdbc.internal.google.cloud.storage.Blob;
-import net.snowflake.client.jdbc.internal.google.cloud.storage.BlobId;
-import net.snowflake.client.jdbc.internal.google.cloud.storage.BlobInfo;
-import net.snowflake.client.jdbc.internal.google.cloud.storage.Storage;
-import net.snowflake.client.jdbc.internal.google.cloud.storage.StorageException;
-import net.snowflake.client.jdbc.internal.google.cloud.storage.StorageOptions;
 import net.snowflake.client.jdbc.internal.snowflake.common.core.SqlState;
 import net.snowflake.client.util.SFPair;
 import net.snowflake.client.util.Stopwatch;
+import net.snowflake.ingest.streaming.internal.VolumeEncryptionMode;
 import net.snowflake.ingest.utils.Logging;
 import org.apache.commons.io.IOUtils;
 
@@ -42,18 +44,23 @@ class IcebergGCSClient implements IcebergStorageClient {
   private static final Logging logger = new Logging(IcebergGCSClient.class);
   private StageInfo stageInfo;
   private Storage gcsClient = null;
+  private VolumeEncryptionMode volumeEncryptionMode = null;
+  private String encryptionKmsKeyId = null;
 
   private IcebergGCSClient() {}
 
   /*
    * Factory method for a SnowflakeGCSClient object
    * @param stage   The stage information that the client will operate on
-   * @param encMat  The encryption material
-   *                required to decrypt/encrypt content in stage
+   * @param volumeEncryptionMode the volume encryption mode (e.g., "GCS_SSE_KMS")
+   * @param encryptionKmsKeyId the KMS key ID for encryption when using GCS_SSE_KMS
    */
-  public static IcebergGCSClient createSnowflakeGCSClient(StageInfo stage)
+  public static IcebergGCSClient createSnowflakeGCSClient(
+      StageInfo stage, VolumeEncryptionMode volumeEncryptionMode, String encryptionKmsKeyId)
       throws SnowflakeSQLException {
     IcebergGCSClient sfGcsClient = new IcebergGCSClient();
+    sfGcsClient.volumeEncryptionMode = volumeEncryptionMode;
+    sfGcsClient.encryptionKmsKeyId = encryptionKmsKeyId;
     sfGcsClient.setupGCSClient(stage);
 
     return sfGcsClient;
@@ -156,7 +163,7 @@ class IcebergGCSClient implements IcebergStorageClient {
         null,
         ErrorCode.INTERNAL_ERROR.getMessageCode(),
         SqlState.INTERNAL_ERROR,
-        /*session = */ "IcebergGCSClient.upload" + " only works with pre-signed URL.");
+        /* session= */ "IcebergGCSClient.upload" + " only works with pre-signed URL.");
   }
 
   /**
@@ -277,8 +284,14 @@ class IcebergGCSClient implements IcebergStorageClient {
             .setMetadata(metadata)
             .build();
 
+    if (this.volumeEncryptionMode != null) {
+      this.volumeEncryptionMode.validateKmsKeyId(this.encryptionKmsKeyId);
+    }
     try {
-      return gcsClient.create(blobInfo, content);
+      // Use KMS encryption if specified, otherwise use default GCS encryption
+      return VolumeEncryptionMode.GCS_SSE_KMS.equals(this.volumeEncryptionMode)
+          ? gcsClient.create(blobInfo, content, BlobWriteOption.kmsKeyName(this.encryptionKmsKeyId))
+          : gcsClient.create(blobInfo, content);
     } catch (Exception e) {
       handleStorageException(e, 0, "upload");
       throw e;

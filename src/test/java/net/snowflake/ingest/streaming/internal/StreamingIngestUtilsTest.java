@@ -10,13 +10,13 @@ import static net.snowflake.ingest.utils.Constants.RESPONSE_SUCCESS;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.InputStream;
 import java.util.ArrayList;
-import net.snowflake.client.jdbc.internal.apache.commons.io.IOUtils;
-import net.snowflake.client.jdbc.internal.apache.http.HttpEntity;
-import net.snowflake.client.jdbc.internal.apache.http.StatusLine;
-import net.snowflake.client.jdbc.internal.apache.http.client.methods.CloseableHttpResponse;
-import net.snowflake.client.jdbc.internal.apache.http.impl.client.CloseableHttpClient;
 import net.snowflake.ingest.TestUtils;
 import net.snowflake.ingest.connection.RequestBuilder;
+import org.apache.commons.io.IOUtils;
+import org.apache.http.HttpEntity;
+import org.apache.http.StatusLine;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.impl.client.CloseableHttpClient;
 import org.junit.Assert;
 import org.junit.Test;
 import org.mockito.Mockito;
@@ -69,7 +69,6 @@ public class StreamingIngestUtilsTest {
   public void testRetries() throws Exception {
     ChannelsStatusResponse response = new ChannelsStatusResponse();
     response.setStatusCode(RESPONSE_ERR_GENERAL_EXCEPTION_RETRY_REQUEST);
-    //    response.setStatusCode(7L);
 
     response.setMessage("honk");
     response.setChannels(new ArrayList<>());
