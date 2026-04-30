@@ -83,7 +83,6 @@
     <version.plugin.gpg>3.2.8</version.plugin.gpg>
     <version.plugin.publishing>0.8.0</version.plugin.publishing>
     <yetus.version>0.13.0</yetus.version>
-    <zstd-jni.version>1.5.6-2</zstd-jni.version>
   </properties>
 
   <dependencyManagement>
@@ -94,11 +93,6 @@
         <version>${fasterxml.version}</version>
         <type>pom</type>
         <scope>import</scope>
-      </dependency>
-      <dependency>
-        <groupId>com.github.luben</groupId>
-        <artifactId>zstd-jni</artifactId>
-        <version>${zstd-jni.version}</version>
       </dependency>
       <dependency>
         <groupId>io.netty</groupId>
