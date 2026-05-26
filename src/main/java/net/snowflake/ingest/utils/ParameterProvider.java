@@ -54,6 +54,10 @@ public class ParameterProvider {
   public static final String ENABLE_DYNAMIC_FLUSH = "ENABLE_DYNAMIC_FLUSH".toLowerCase();
   public static final String TASK_BUFFER_TOTAL_LIMIT_BYTES =
       "TASK_BUFFER_TOTAL_LIMIT_BYTES".toLowerCase();
+  public static final String MAX_CHANNEL_WRITE_RETRY_COUNT_ON_QUEUE_FULL =
+      "MAX_CHANNEL_WRITE_RETRY_COUNT_ON_QUEUE_FULL".toLowerCase();
+  public static final String MAX_REGISTRATION_QUEUE_SIZE =
+      "MAX_REGISTRATION_QUEUE_SIZE".toLowerCase();
 
   // Default values
   public static final long BUFFER_FLUSH_CHECK_INTERVAL_IN_MILLIS_DEFAULT = 100;
@@ -72,6 +76,10 @@ public class ParameterProvider {
   public static final String CONNECTOR_NAME_DEFAULT = "unknown";
   public static final Boolean ENABLE_DYNAMIC_FLUSH_DEFAULT = false;
   public static final long TASK_BUFFER_TOTAL_LIMIT_BYTES_DEFAULT = 524288000L; // 500 MB
+  public static final int MAX_CHANNEL_WRITE_RETRY_COUNT_ON_QUEUE_FULL_DEFAULT =
+      150; // 10 minutes assuming default retry interval of 4s
+  public static final int MAX_REGISTRATION_QUEUE_SIZE_DEFAULT =
+      600; // 10 minutes of no progress assuming 1s flush interval
 
   // Lag related parameters
   public static final long MAX_CLIENT_LAG_DEFAULT = 1000; // 1 second
@@ -304,6 +312,20 @@ public class ParameterProvider {
         props,
         false /* enforceDefault */);
 
+    this.checkAndUpdate(
+        MAX_CHANNEL_WRITE_RETRY_COUNT_ON_QUEUE_FULL,
+        MAX_CHANNEL_WRITE_RETRY_COUNT_ON_QUEUE_FULL_DEFAULT,
+        parameterOverrides,
+        props,
+        false /* enforceDefault */);
+
+    this.checkAndUpdate(
+        MAX_REGISTRATION_QUEUE_SIZE,
+        MAX_REGISTRATION_QUEUE_SIZE_DEFAULT,
+        parameterOverrides,
+        props,
+        false /* enforceDefault */);
+
     if (getMaxChunksInBlob() > getMaxChunksInRegistrationRequest()) {
       throw new IllegalArgumentException(
           String.format(
@@ -313,7 +335,9 @@ public class ParameterProvider {
     }
   }
 
-  /** @return Longest interval in milliseconds between buffer flushes */
+  /**
+   * @return Longest interval in milliseconds between buffer flushes
+   */
   public long getCachedMaxClientLagInMs() {
     if (cachedBufferFlushIntervalMs != -1L) {
       return cachedBufferFlushIntervalMs;
@@ -378,7 +402,9 @@ public class ParameterProvider {
     return computedLag;
   }
 
-  /** @return Time in milliseconds between checks to see if the buffer should be flushed */
+  /**
+   * @return Time in milliseconds between checks to see if the buffer should be flushed
+   */
   public long getBufferFlushCheckIntervalInMs() {
     Object val =
         this.parameterMap.getOrDefault(
@@ -389,7 +415,9 @@ public class ParameterProvider {
     return (long) val;
   }
 
-  /** @return Duration in milliseconds to delay data insertion to the buffer when throttled */
+  /**
+   * @return Duration in milliseconds to delay data insertion to the buffer when throttled
+   */
   public long getInsertThrottleIntervalInMs() {
     Object val =
         this.parameterMap.getOrDefault(
@@ -400,7 +428,9 @@ public class ParameterProvider {
     return (long) val;
   }
 
-  /** @return Percent of free total memory at which we throttle row inserts */
+  /**
+   * @return Percent of free total memory at which we throttle row inserts
+   */
   public int getInsertThrottleThresholdInPercentage() {
     Object val =
         this.parameterMap.getOrDefault(
@@ -412,7 +442,9 @@ public class ParameterProvider {
     return (int) val;
   }
 
-  /** @return Absolute size in bytes of free total memory at which we throttle row inserts */
+  /**
+   * @return Absolute size in bytes of free total memory at which we throttle row inserts
+   */
   public int getInsertThrottleThresholdInBytes() {
     Object val =
         this.parameterMap.getOrDefault(
@@ -423,7 +455,9 @@ public class ParameterProvider {
     return (int) val;
   }
 
-  /** @return true if jmx metrics are enabled for a client */
+  /**
+   * @return true if jmx metrics are enabled for a client
+   */
   public boolean hasEnabledSnowpipeStreamingMetrics() {
     Object val =
         this.parameterMap.getOrDefault(
@@ -434,7 +468,9 @@ public class ParameterProvider {
     return (boolean) val;
   }
 
-  /** @return Blob format version */
+  /**
+   * @return Blob format version
+   */
   public Constants.BdecVersion getBlobFormatVersion() {
     Object val = this.parameterMap.getOrDefault(BLOB_FORMAT_VERSION, BLOB_FORMAT_VERSION_DEFAULT);
     if (val instanceof Constants.BdecVersion) {
@@ -463,7 +499,9 @@ public class ParameterProvider {
     return (int) val;
   }
 
-  /** @return the max retry count when waiting for a blob upload task to finish */
+  /**
+   * @return the max retry count when waiting for a blob upload task to finish
+   */
   public int getBlobUploadMaxRetryCount() {
     Object val =
         this.parameterMap.getOrDefault(
@@ -474,7 +512,36 @@ public class ParameterProvider {
     return (int) val;
   }
 
-  /** @return The max memory limit in bytes */
+  /**
+   * @return The max number of retries for channel write API before giving up
+   */
+  public int getMaxChannelWriteRetryCountOnQueueFull() {
+    Object val =
+        this.parameterMap.getOrDefault(
+            MAX_CHANNEL_WRITE_RETRY_COUNT_ON_QUEUE_FULL,
+            MAX_CHANNEL_WRITE_RETRY_COUNT_ON_QUEUE_FULL_DEFAULT);
+    if (val instanceof String) {
+      return Integer.parseInt(val.toString());
+    }
+    return (int) val;
+  }
+
+  /**
+   * @return The max size of the registration queue in number of chunks before throttling
+   */
+  public int getMaxRegistrationQueueSize() {
+    Object val =
+        this.parameterMap.getOrDefault(
+            MAX_REGISTRATION_QUEUE_SIZE, MAX_REGISTRATION_QUEUE_SIZE_DEFAULT);
+    if (val instanceof String) {
+      return Integer.parseInt(val.toString());
+    }
+    return (int) val;
+  }
+
+  /**
+   * @return The max memory limit in bytes
+   */
   public long getMaxMemoryLimitInBytes() {
     Object val =
         this.parameterMap.getOrDefault(
@@ -482,7 +549,9 @@ public class ParameterProvider {
     return (val instanceof String) ? Long.parseLong(val.toString()) : (long) val;
   }
 
-  /** @return The max channel size in bytes */
+  /**
+   * @return The max channel size in bytes
+   */
   public long getMaxChannelSizeInBytes() {
     Object val =
         this.parameterMap.getOrDefault(
@@ -490,7 +559,9 @@ public class ParameterProvider {
     return (val instanceof String) ? Long.parseLong(val.toString()) : (long) val;
   }
 
-  /** @return The max chunk size in bytes that could avoid OOM at server side */
+  /**
+   * @return The max chunk size in bytes that could avoid OOM at server side
+   */
   public long getMaxChunkSizeInBytes() {
     Object val =
         this.parameterMap.getOrDefault(MAX_CHUNK_SIZE_IN_BYTES, MAX_CHUNK_SIZE_IN_BYTES_DEFAULT);
@@ -504,7 +575,9 @@ public class ParameterProvider {
     return (val instanceof String) ? Long.parseLong(val.toString()) : (long) val;
   }
 
-  /** @return The max number of chunks that can be put into a single BDEC. */
+  /**
+   * @return The max number of chunks that can be put into a single BDEC.
+   */
   public int getMaxChunksInBlob() {
     Object val =
         this.parameterMap.getOrDefault(
@@ -515,7 +588,9 @@ public class ParameterProvider {
     return (val instanceof String) ? Integer.parseInt(val.toString()) : (int) val;
   }
 
-  /** @return The max number of chunks that can be put into a single blob registration request. */
+  /**
+   * @return The max number of chunks that can be put into a single blob registration request.
+   */
   public int getMaxChunksInRegistrationRequest() {
     Object val =
         this.parameterMap.getOrDefault(
@@ -523,7 +598,9 @@ public class ParameterProvider {
     return (val instanceof String) ? Integer.parseInt(val.toString()) : (int) val;
   }
 
-  /** @return BDEC compression algorithm */
+  /**
+   * @return BDEC compression algorithm
+   */
   public Constants.BdecParquetCompression getBdecParquetCompressionAlgorithm() {
     Object val =
         this.parameterMap.getOrDefault(
@@ -537,7 +614,9 @@ public class ParameterProvider {
     return Constants.BdecParquetCompression.fromName((String) val);
   }
 
-  /** @return Whether new JSON parsing logic, which preserves */
+  /**
+   * @return Whether new JSON parsing logic, which preserves
+   */
   public boolean isEnableNewJsonParsingLogic() {
     Object val =
         this.parameterMap.getOrDefault(
@@ -545,7 +624,9 @@ public class ParameterProvider {
     return (val instanceof String) ? Boolean.parseBoolean(val.toString()) : (boolean) val;
   }
 
-  /** @return Whether the client is in Iceberg mode */
+  /**
+   * @return Whether the client is in Iceberg mode
+   */
   public boolean isEnableIcebergStreaming() {
     if (cachedEnableIcebergStreaming != null) {
       return cachedEnableIcebergStreaming;
