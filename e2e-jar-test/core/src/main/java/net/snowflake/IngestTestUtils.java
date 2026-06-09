@@ -52,7 +52,10 @@ public class IngestTestUtils {
   private final Base64.Decoder base64Decoder = Base64.getDecoder();
 
   public IngestTestUtils(String testName)
-      throws SQLException, IOException, ClassNotFoundException, NoSuchAlgorithmException,
+      throws SQLException,
+          IOException,
+          ClassNotFoundException,
+          NoSuchAlgorithmException,
           InvalidKeySpecException {
     testId = String.format("%s_%s", testName, UUID.randomUUID().toString().replace("-", "_"));
     connection = getConnection();
@@ -108,9 +111,12 @@ public class IngestTestUtils {
   }
 
   private Connection getConnection()
-      throws IOException, ClassNotFoundException, SQLException, NoSuchAlgorithmException,
+      throws IOException,
+          ClassNotFoundException,
+          SQLException,
+          NoSuchAlgorithmException,
           InvalidKeySpecException {
-    Class.forName("net.snowflake.client.jdbc.SnowflakeDriver");
+    loadDriverClass();
 
     Properties loadedProps = loadProperties();
 
@@ -222,5 +228,14 @@ public class IngestTestUtils {
         .createStatement()
         .execute(String.format(String.format("drop database %s", database)));
     connection.close();
+  }
+
+  private void loadDriverClass() throws ClassNotFoundException {
+    try {
+      Class.forName("net.snowflake.client.jdbc.SnowflakeDriver");
+    } catch (ClassNotFoundException e) {
+      // Fallback to shaded SnowflakeDriver
+      Class.forName("net.snowflake.ingest.internal.net.snowflake.client.jdbc.SnowflakeDriver");
+    }
   }
 }

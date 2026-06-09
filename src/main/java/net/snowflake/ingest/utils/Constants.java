@@ -34,8 +34,16 @@ public class Constants {
   public static final String OAUTH_REFRESH_TOKEN = "oauth_refresh_token";
   public static final String OAUTH_TOKEN_ENDPOINT = "oauth_token_endpoint";
   public static final String SNOWFLAKE_OAUTH_TOKEN_ENDPOINT = "/oauth/token-request";
+
+  /**
+   * This is used to construct a unique row identifier for downstream processing e.g. for Dynamic
+   * Tables and Change Tracking. It has to be unique for each table in the file in the case of
+   * interleaved tables. Changes to how this is constructed should be done with care and need
+   * meticulous version management and testing.
+   */
   public static final String PRIMARY_FILE_ID_KEY =
       "primaryFileId"; // Don't change, should match Parquet Scanner
+
   public static final String ASSIGNED_FULL_FILE_NAME_KEY = "assignedFullFileName";
   public static final String SDK_VERSION_KEY = "sdkVersion";
   public static final long RESPONSE_SUCCESS = 0L; // Don't change, should match server side
@@ -44,7 +52,6 @@ public class Constants {
   public static final long RESPONSE_ERR_ENQUEUE_TABLE_CHUNK_QUEUE_FULL =
       7L; // Don't change, should match server side
   public static final int BLOB_UPLOAD_TIMEOUT_IN_SEC = 20;
-  public static final int INSERT_THROTTLE_MAX_RETRY_COUNT = 60;
   public static final long MAX_BLOB_SIZE_IN_BYTES = 256 * 1024 * 1024;
   public static final int BLOB_TAG_SIZE_IN_BYTES = 4;
   public static final int BLOB_VERSION_SIZE_IN_BYTES = 1;
@@ -70,6 +77,8 @@ public class Constants {
   public static final int MAX_OAUTH_REFRESH_TOKEN_RETRY = 3;
   public static final int BINARY_COLUMN_MAX_SIZE = 8 * 1024 * 1024;
   public static final int VARCHAR_COLUMN_MAX_SIZE = 16 * 1024 * 1024;
+  public static final int INSERT_THROTTLE_MAX_RETRY_COUNT =
+      60; // 1 minute with default retry interval
 
   // Channel level constants
   public static final String CHANNEL_STATUS_ENDPOINT = "/v1/streaming/channels/status/";
@@ -177,6 +186,7 @@ public class Constants {
               name, Arrays.asList(BdecParquetCompression.values())));
     }
   }
+
   // Parameters
   public static final boolean DISABLE_BACKGROUND_FLUSH = false;
   public static final boolean COMPRESS_BLOB_TWICE = false;

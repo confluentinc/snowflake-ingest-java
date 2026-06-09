@@ -1,5 +1,10 @@
+/*
+ * Copyright (c) 2025 Snowflake Computing Inc. All rights reserved.
+ */
+
 package net.snowflake.ingest.streaming.internal;
 
+import static net.snowflake.ingest.TestUtils.waitForOffset;
 import static net.snowflake.ingest.utils.Constants.BLOB_NO_HEADER;
 import static net.snowflake.ingest.utils.Constants.COMPRESS_BLOB_TWICE;
 import static net.snowflake.ingest.utils.Constants.DROP_CHANNEL_ENDPOINT;
@@ -75,7 +80,7 @@ public class StreamingIngestIT {
   private Connection jdbcConnection;
   private String testDb;
 
-  @Parameters
+  @Parameters(name = "compressionAlgorithm={0}, enableIcebergStreaming={1}")
   public static Iterable<Object[]> getParameterPermutations() {
     return Arrays.asList(
         new Object[][] {{"GZIP", false}, {"ZSTD", false}, {"GZIP", true}, {"ZSTD", true}});
@@ -838,12 +843,14 @@ public class StreamingIngestIT {
     row.put("c1", "1");
     verifyInsertValidationResponse(channelA.insertRow(row, "1"));
     clientA.flush(false).get();
+    waitForOffset(channelA, "1");
 
     // ClientB opens channel and invalidates ClientA
     SnowflakeStreamingIngestChannel channelB = clientB.openChannel(requestA);
     row.put("c1", "2");
     verifyInsertValidationResponse(channelB.insertRow(row, "2"));
     clientB.flush(false).get();
+    waitForOffset(channelB, "2");
 
     // ClientA tries to write, but will fail to register because it's invalid
     row.put("c1", "3");
@@ -1270,7 +1277,7 @@ public class StreamingIngestIT {
     row.put("c2", null);
     channel.insertRow(row, "offset2");
 
-    TestUtils.waitForOffset(channel, "offset2");
+    waitForOffset(channel, "offset2");
 
     jdbcConnection.createStatement().execute(String.format("alter table %s migrate;", tableName));
 
@@ -1428,6 +1435,48 @@ public class StreamingIngestIT {
     }
   }
 
+  @Test
+  public void testChannelFlush() throws Exception {
+    Map<String, Object> parameterMap = new HashMap<>();
+    parameterMap.put(ParameterProvider.MAX_CLIENT_LAG, "60 seconds");
+    SnowflakeStreamingIngestClient client =
+        SnowflakeStreamingIngestClientFactory.builder("testChannelFlush")
+            .setProperties(prop)
+            .setParameterOverrides(parameterMap)
+            .build();
+
+    OpenChannelRequest request1 =
+        OpenChannelRequest.builder("CHANNEL")
+            .setDBName(testDb)
+            .setSchemaName(TEST_SCHEMA)
+            .setTableName(TEST_TABLE)
+            .setOnErrorOption(OpenChannelRequest.OnErrorOption.CONTINUE)
+            .build();
+
+    // Open a streaming ingest channel from the given client
+    SnowflakeStreamingIngestChannel channel1 = client.openChannel(request1);
+    for (int val = 0; val < 1000; val++) {
+      Map<String, Object> row = new HashMap<>();
+      row.put("c1", Integer.toString(val));
+      verifyInsertValidationResponse(channel1.insertRow(row, Integer.toString(val)));
+    }
+
+    Thread.sleep(5000);
+
+    // Verify that nothing gets committed
+    Assert.assertNull(channel1.getLatestCommittedOffsetToken());
+
+    // Flush the channel
+    client.flush().get();
+    Thread.sleep(5000);
+
+    // Verify that at least something is committed
+    Assert.assertNotNull(channel1.getLatestCommittedOffsetToken());
+
+    // Close the channel to make sure everything is committed
+    channel1.close().get();
+  }
+
   /**
    * Ingests rows into a table and verifies them by querying the table.
    *
@@ -1462,7 +1511,7 @@ public class StreamingIngestIT {
       }
       verifyInsertValidationResponse(channel.insertRow(row, Integer.toString(i)));
     }
-    TestUtils.waitForOffset(channel, Integer.toString(numberOfRows - 1));
+    waitForOffset(channel, Integer.toString(numberOfRows - 1));
     channel.close();
 
     // query them and verify
