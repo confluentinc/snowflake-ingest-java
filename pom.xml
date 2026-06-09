@@ -9,7 +9,7 @@
   <!-- Arifact name and version information -->
   <groupId>io.confluent</groupId>
   <artifactId>snowflake-ingest-sdk</artifactId>
-  <version>4.3.2</version>
+  <version>4.3.2-7</version>
   <packaging>jar</packaging>
   <name>Snowflake Ingest SDK</name>
   <description>Snowflake Ingest SDK</description>
